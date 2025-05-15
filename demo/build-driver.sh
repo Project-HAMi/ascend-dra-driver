@@ -30,10 +30,12 @@ source "${CURRENT_DIR}/scripts/common.sh"
 # Build the example driver image
 ${SCRIPTS_DIR}/build-driver-image.sh
 
-# If a cluster is already running, load the image onto its nodes
-EXISTING_CLUSTER="$(${KIND} get clusters | grep -w "${KIND_CLUSTER_NAME}" || true)"
-if [ "${EXISTING_CLUSTER}" != "" ]; then
-	${SCRIPTS_DIR}/load-driver-image-into-kind.sh
+# 2. 若 minikube 集群已经运行，则加载镜像
+if minikube status --profile="${MINIKUBE_PROFILE_NAME}" &>/dev/null; then
+  echo "Minikube cluster '${MINIKUBE_PROFILE_NAME}' detected; loading driver image..."
+  minikube image load "${DRIVER_IMAGE}" --profile="${MINIKUBE_PROFILE_NAME}"
+else
+  echo "No running minikube cluster named '${MINIKUBE_PROFILE_NAME}' found. Skip loading image."
 fi
 
 set +x

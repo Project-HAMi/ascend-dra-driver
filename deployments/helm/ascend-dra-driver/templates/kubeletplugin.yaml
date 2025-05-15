@@ -1,0 +1,119 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "ascend-dra-driver.fullname" . }}-kubeletplugin
+  namespace: {{ include "ascend-dra-driver.namespace" . }}
+  labels:
+    {{- include "ascend-dra-driver.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ascend-dra-driver.selectorLabels" . | nindent 6 }}
+  {{- with .Values.kubeletPlugin.updateStrategy }}
+  updateStrategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      {{- with .Values.kubeletPlugin.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "ascend-dra-driver.templateLabels" . | nindent 8 }}
+    spec:
+      {{- if .Values.kubeletPlugin.priorityClassName }}
+      priorityClassName: {{ .Values.kubeletPlugin.priorityClassName }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "ascend-dra-driver.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.kubeletPlugin.podSecurityContext | nindent 8 }}
+      containers:
+      - name: plugin
+        securityContext:
+          {{- toYaml .Values.kubeletPlugin.containers.plugin.securityContext | nindent 10 }}
+        image: {{ include "ascend-dra-driver.fullimage" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["sleep", "infinity"]
+        resources:
+          {{- toYaml .Values.kubeletPlugin.containers.plugin.resources | nindent 10 }}
+        env:
+        - name: CDI_ROOT
+          value: /var/run/cdi
+        - name: LD_LIBRARY_PATH
+          value: /usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        # Simulated number of devices the example driver will pretend to have.
+        - name: NUM_DEVICES
+          value: "8"
+        volumeMounts:
+        - name: plugins-registry
+          mountPath: /var/lib/kubelet/plugins_registry
+        - name: plugins
+          mountPath: /var/lib/kubelet/plugins
+        - name: cdi
+          mountPath: /var/run/cdi
+        - name: device-plugin
+          mountPath: /var/lib/kubelet/device-plugins
+        - name: pod-resource
+          mountPath: /var/lib/kubelet/pod-resources
+        - name: hiai-driver
+          mountPath: /usr/local/Ascend
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+        # 添加NPU模板信息文件挂载
+        - name: npu-template-info
+          mountPath: /etc/npu
+          readOnly: true
+      volumes:
+      - name: plugins-registry
+        hostPath:
+          path: /var/lib/kubelet/plugins_registry
+      - name: plugins
+        hostPath:
+          path: /var/lib/kubelet/plugins
+      - name: cdi
+        hostPath:
+          path: /var/run/cdi
+      - name: device-plugin
+        hostPath:
+          path: /var/lib/kubelet/device-plugins
+      - name: pod-resource
+        hostPath:
+          path: /var/lib/kubelet/pod-resources
+      - name: hiai-driver
+        hostPath:
+          path: /usr/local/Ascend
+      - name: tmp
+        hostPath:
+          path: /tmp
+      # 添加NPU模板信息文件存放目录
+      - name: npu-template-info
+        hostPath:
+          path: /etc/npu
+          type: DirectoryOrCreate
+      {{- with .Values.kubeletPlugin.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kubeletPlugin.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kubeletPlugin.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

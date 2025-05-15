@@ -25,21 +25,23 @@ CURRENT_DIR="$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)"
 set -ex
 set -o pipefail
 
+chmod +x "${CURRENT_DIR}/scripts/create-minikube-cluster.sh"
+chmod +x "${CURRENT_DIR}/install-dra-driver.sh"
+
 source "${CURRENT_DIR}/scripts/common.sh"
 
-# Build the kind image and create a test cluster
-if [ "${BUILD_KIND_IMAGE}" = "true" ]; then
-	${SCRIPTS_DIR}/build-kind-image.sh
-fi
-${SCRIPTS_DIR}/create-kind-cluster.sh
 
-# If a driver image already exists load it into the cluster
+# 创建或启动 minikube 集群（幂等）
+${SCRIPTS_DIR}/create-minikube-cluster.sh
+
+# 如果本地已经存在 DRIVER_IMAGE，则加载到 minikube 集群
 EXISTING_IMAGE_ID="$(${CONTAINER_TOOL} images --filter "reference=${DRIVER_IMAGE}" -q)"
 if [ "${EXISTING_IMAGE_ID}" != "" ]; then
-	${SCRIPTS_DIR}/load-driver-image-into-kind.sh
+  # minikube >= v1.25.0 开始支持 image load 命令
+  minikube image load "${DRIVER_IMAGE}" --profile="${MINIKUBE_PROFILE_NAME}"
 fi
 
 set +x
 printf '\033[0;32m'
-echo "Cluster creation complete: ${KIND_CLUSTER_NAME}"
+echo "Cluster creation complete: ${MINIKUBE_PROFILE_NAME}"
 printf '\033[0m'

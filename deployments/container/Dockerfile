@@ -24,6 +24,8 @@ RUN make PREFIX=/artifacts cmds
 
 FROM ${BASE_IMAGE}
 
+RUN apt update && apt install -y curl iputils-ping wget
+
 LABEL io.k8s.display-name="Example Resource Driver for Dynamic Resource Allocation (DRA)"
 LABEL name="Example Resource Driver for Dynamic Resource Allocation (DRA)"
 LABEL vendor="example.com"
@@ -34,4 +36,4 @@ LABEL release="N/A"
 LABEL summary="Example DRA resource driver for Kubernetes"
 LABEL description="See summary"
 
-COPY --from=build /artifacts/dra-example-kubeletplugin /usr/bin/dra-example-kubeletplugin
+COPY --from=build /artifacts/ascend-dra-kubeletplugin /usr/bin/ascend-dra-kubeletplugin

@@ -1,0 +1,42 @@
+# 使用整卡模板分配整个NPU设备
+# 演示如何使用基于设备型号的整卡分配
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: npu-vnpu-system1
+
+---
+apiVersion: resource.k8s.io/v1beta1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: npu-vnpu-system1
+  name: npu-fullcard-template
+spec:
+  spec:
+    devices:
+      requests:
+      - name: npu
+        deviceClassName: npu-ascend310p.example.com
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: npu-vnpu-system1
+  name: npu-pod-fullcard
+  labels:
+    app: npu-pod
+spec:
+  containers:
+  - name: npu-container
+    image: ubuntu:22.04
+    command: ["bash", "-c"]
+    args: ["echo 'ASCEND环境变量:'; env | grep ASCEND; echo 'NPU环境变量:'; env | grep NPU; trap 'exit 0' TERM; sleep 9999 & wait"]
+    resources:
+      claims:
+      - name: npu
+  resourceClaims:
+  - name: npu
+    resourceClaimTemplateName: npu-fullcard-template

@@ -23,7 +23,7 @@
 SCRIPTS_DIR="$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)"
 
 # The name of the example driver
-: ${DRIVER_NAME:=dra-example-driver}
+: ${DRIVER_NAME:=ascend-dra-driver}
 
 # The registry, image and tag for the example driver
 : ${DRIVER_IMAGE_REGISTRY:="registry.example.com"}
@@ -31,29 +31,12 @@ SCRIPTS_DIR="$(cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd)"
 : ${DRIVER_IMAGE_TAG:="v0.1.0"}
 : ${DRIVER_IMAGE_PLATFORM:="ubuntu22.04"}
 
-# The kubernetes repo to build the kind cluster from
-: ${KIND_K8S_REPO:="https://github.com/kubernetes/kubernetes.git"}
-
-# The kubernetes tag to build the kind cluster from
-# From ${KIND_K8S_REPO}/tags
-: ${KIND_K8S_TAG:="v1.32.0"}
-
-# At present, kind has a new enough node image that we don't need to build our
-# own. This won't always be true and we may need to set the variable below to
-# 'true' from time to time as things change.
-: ${BUILD_KIND_IMAGE:="false"}
-
-# The name of the kind cluster to create
-: ${KIND_CLUSTER_NAME:="${DRIVER_NAME}-cluster"}
-
-# The path to kind's cluster configuration file
-: ${KIND_CLUSTER_CONFIG_PATH:="${SCRIPTS_DIR}/kind-cluster-config.yaml"}
+# 集群名称（minikube 的 profile 名）
+: ${MINIKUBE_PROFILE_NAME:="${DRIVER_NAME}-cluster"}
 
 # The derived name of the driver image to build
 : ${DRIVER_IMAGE:="${DRIVER_IMAGE_REGISTRY}/${DRIVER_IMAGE_NAME}:${DRIVER_IMAGE_TAG}"}
 
-# The name of the kind image to build / run
-: ${KIND_IMAGE:="kindest/node:${KIND_K8S_TAG}"}
 
 # Container tool, e.g. docker/podman
 if [[ -z "${CONTAINER_TOOL}" ]]; then
@@ -68,5 +51,3 @@ if [[ -z "${CONTAINER_TOOL}" ]]; then
         return 1
     fi
 fi
-
-: ${KIND:="env KIND_EXPERIMENTAL_PROVIDER=${CONTAINER_TOOL} kind"}

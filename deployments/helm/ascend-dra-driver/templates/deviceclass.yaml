@@ -1,0 +1,2 @@
+# 注意：默认 deviceclass 已经由代码中的 CreatePredefinedDeviceClasses 函数自动创建
+# 此文件不再需要静态定义 DeviceClass
