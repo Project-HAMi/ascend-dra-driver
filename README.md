@@ -60,7 +60,21 @@ kube-system          kube-scheduler-ascend-dra-driver-cluster-control-plane     
 local-path-storage   local-path-provisioner-7dbf974f64-9jmc7                           1/1     Running   0          1m
 ```
 
-2. 编译和安装DRA驱动程序：
+2. 安装NPU引擎插件
+
+需要在集群内安装 [ascend-docker-runtime](https://gitee.com/ascend/mind-cluster/tree/branch_v6.0.0/component/ascend-docker-runtime) 引擎插件，提供对 Ascend NPU 的容器化支持。
+先进入集群：
+```bash
+minikube ssh 
+```
+按照链接教程生成二进制run包后，执行安装命令：
+```bash
+./Ascend-docker-runtime_6.0.0.SPC1_linux-aarch64.run --install --install-scene=containerd
+```
+
+
+
+3. 编译和安装DRA驱动程序：
 ```bash
 # 构建驱动镜像
 ./demo/build-driver.sh

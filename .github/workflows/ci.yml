@@ -1,0 +1,46 @@
+name: CI Build
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  ci-build:
+    runs-on: ubuntu-22.04
+    env:
+      IMAGE_NAME: dra-driver
+      VERSION: ci-${{ github.sha }}
+      OWNER: ${{ github.repository_owner }}
+      REPO_NAME: ${{ github.event.repository.name }}
+
+    steps:
+      # Checkout repo code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Generate CRDs/artifacts
+      - name: Generate build artifacts
+        run: make docker-generate
+
+      # Enable Docker Buildx for multi-arch
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build multi-arch image, but don't push (just test build)
+      - name: Build multi-arch image (no push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deployments/container/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false   # 🚨 only validate build
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+          build-args: |
+            GOLANG_VERSION=1.23.1
+            BASE_IMAGE=docker.io/ubuntu:22.04
+            VERSION=${{ env.VERSION }}

@@ -39,7 +39,7 @@ spec:
           {{- toYaml .Values.kubeletPlugin.containers.plugin.securityContext | nindent 10 }}
         image: {{ include "ascend-dra-driver.fullimage" . }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
-        command: ["sleep", "infinity"]
+        command: ["/usr/bin/ascend-dra-kubeletplugin"]
         resources:
           {{- toYaml .Values.kubeletPlugin.containers.plugin.resources | nindent 10 }}
         env:
