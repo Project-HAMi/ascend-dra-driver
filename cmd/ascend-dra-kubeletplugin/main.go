@@ -18,27 +18,26 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/urfave/cli/v2"
 
 	coreclientset "k8s.io/client-go/kubernetes"
+	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 
+	"Ascend-dra-driver/pkg/consts"
 	"Ascend-dra-driver/pkg/flags"
 )
 
 const (
-	DriverName       = "npu.example.com"
-	DriverDomainName = "npu.example.com"
-	DriverDomain     = "npu.example.com/"
-
-	PluginRegistrationPath     = "/var/lib/kubelet/plugins_registry/" + DriverName + ".sock"
-	DriverPluginPath           = "/var/lib/kubelet/plugins/" + DriverName
-	DriverPluginSocketPath     = DriverPluginPath + "/plugin.sock"
+	DriverDomainName           = "npu.example.com"
+	DriverDomain               = "npu.example.com/"
 	DriverPluginCheckpointFile = "checkpoint.json"
 )
 
@@ -46,13 +45,21 @@ type Flags struct {
 	kubeClientConfig flags.KubeClientConfig
 	loggingConfig    *flags.LoggingConfig
 
-	nodeName string
-	cdiRoot  string
+	nodeName                      string
+	cdiRoot                       string
+	kubeletRegistrarDirectoryPath string
+	kubeletPluginsDirectoryPath   string
+	healthcheckPort               int
 }
 
 type Config struct {
-	flags      *Flags
-	coreclient coreclientset.Interface
+	flags         *Flags
+	coreclient    coreclientset.Interface
+	cancelMainCtx func(error)
+}
+
+func (c Config) DriverPluginPath() string {
+	return filepath.Join(c.flags.kubeletPluginsDirectoryPath, consts.DriverName)
 }
 
 func main() {
@@ -81,14 +88,43 @@ func newApp() *cli.App {
 			Destination: &flags.cdiRoot,
 			EnvVars:     []string{"CDI_ROOT"},
 		},
+		&cli.StringFlag{
+			Name:        "kubelet-registrar-directory-path",
+			Usage:       "Absolute path to the directory where kubelet stores plugin registrations.",
+			Value:       kubeletplugin.KubeletRegistryDir,
+			Destination: &flags.kubeletRegistrarDirectoryPath,
+			EnvVars:     []string{"KUBELET_REGISTRAR_DIRECTORY_PATH"},
+		},
+		&cli.StringFlag{
+			Name:        "kubelet-plugins-directory-path",
+			Usage:       "Absolute path to the directory where kubelet stores plugin data.",
+			Value:       kubeletplugin.KubeletPluginsDir,
+			Destination: &flags.kubeletPluginsDirectoryPath,
+			EnvVars:     []string{"KUBELET_PLUGINS_DIRECTORY_PATH"},
+		},
+		&cli.IntFlag{
+			Name:        "healthcheck-port",
+			Usage:       "Port to start a gRPC healthcheck service. When positive, a literal port number. When zero, a random port is allocated. When negative, the healthcheck service is disabled.",
+			Value:       -1,
+			Destination: &flags.healthcheckPort,
+			EnvVars:     []string{"HEALTHCHECK_PORT"},
+		},
 	}
 	cliFlags = append(cliFlags, flags.kubeClientConfig.Flags()...)
 	cliFlags = append(cliFlags, flags.loggingConfig.Flags()...)
 
 	app := &cli.App{
-		Name:  "dra-example-kubeletplugin",
-		Usage: "dra-example-kubeletplugin implements a DRA driver plugin for Ascend NPU.",
-		Flags: cliFlags,
+		Name:            "ascend-dra-kubeletplugin",
+		Usage:           "ascend-dra-kubeletplugin implements a DRA driver plugin for Ascend NPU.",
+		ArgsUsage:       " ",
+		HideHelpCommand: true,
+		Flags:           cliFlags,
+		Before: func(c *cli.Context) error {
+			if c.Args().Len() > 0 {
+				return fmt.Errorf("arguments not supported: %v", c.Args().Slice())
+			}
+			return flags.loggingConfig.Apply()
+		},
 		Action: func(c *cli.Context) error {
 			ctx := c.Context
 			clientSets, err := flags.kubeClientConfig.NewClientSets()
@@ -101,15 +137,17 @@ func newApp() *cli.App {
 				coreclient: clientSets.Core,
 			}
 
-			return StartPlugin(ctx, config)
+			return RunPlugin(ctx, config)
 		},
 	}
 
 	return app
 }
 
-func StartPlugin(ctx context.Context, config *Config) error {
-	err := os.MkdirAll(DriverPluginPath, 0750)
+func RunPlugin(ctx context.Context, config *Config) error {
+	logger := klog.FromContext(ctx)
+
+	err := os.MkdirAll(config.DriverPluginPath(), 0750)
 	if err != nil {
 		return err
 	}
@@ -127,18 +165,29 @@ func StartPlugin(ctx context.Context, config *Config) error {
 		return fmt.Errorf("path for cdi file generation is not a directory: '%v'", err)
 	}
 
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stop()
+	ctx, cancel := context.WithCancelCause(ctx)
+	config.cancelMainCtx = cancel
+
 	driver, err := NewDriver(ctx, config)
 	if err != nil {
 		return err
 	}
 
-	sigc := make(chan os.Signal, 1)
-	signal.Notify(sigc, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-	<-sigc
+	<-ctx.Done()
+	// restore default signal behavior as soon as possible in case graceful
+	// shutdown gets stuck.
+	stop()
+	if err := context.Cause(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		// A canceled context is the normal case here when the process receives
+		// a signal. Only log the error for more interesting cases.
+		logger.Error(err, "error from context")
+	}
 
-	err = driver.Shutdown(ctx)
+	err = driver.Shutdown(logger)
 	if err != nil {
-		klog.FromContext(ctx).Error(err, "Unable to cleanly shutdown driver")
+		logger.Error(err, "Unable to cleanly shutdown driver")
 	}
 
 	return nil

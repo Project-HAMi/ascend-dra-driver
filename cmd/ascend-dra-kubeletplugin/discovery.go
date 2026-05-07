@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	resourceapi "k8s.io/api/resource/v1beta1"
+	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/utils/ptr"
 )
 
@@ -95,10 +95,8 @@ func enumerateAllPossibleDevices() (AllocatableDevices, *VnpuManager, error) {
 		}
 
 		device := resourceapi.Device{
-			Name: deviceName,
-			Basic: &resourceapi.BasicDevice{
-				Attributes: devAttributes,
-			},
+			Name:       deviceName,
+			Attributes: devAttributes,
 		}
 		alldevices[device.Name] = device
 		log.Printf("Discovered NPU device: %s, Type: NPU, Model: %s", deviceName, dev.DevType)
