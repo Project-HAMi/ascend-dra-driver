@@ -12,14 +12,16 @@ import (
 	"strings"
 	"sync"
 
-	resourceapi "k8s.io/api/resource/v1beta1"
+	resourceapi "k8s.io/api/resource/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1beta1"
+	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	"k8s.io/utils/ptr"
+
+	"Ascend-dra-driver/pkg/consts"
 
 	configapi "Ascend-dra-driver/api/example.com/resource/gpu/v1alpha1"
 
@@ -120,7 +122,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 		return nil, fmt.Errorf("unable to create CDI spec file for common edits: %v", err)
 	}
 
-	checkpointManager, err := checkpointmanager.NewCheckpointManager(DriverPluginPath)
+	checkpointManager, err := checkpointmanager.NewCheckpointManager(config.DriverPluginPath())
 	if err != nil {
 		return nil, fmt.Errorf("unable to create checkpoint manager: %v", err)
 	}
@@ -241,7 +243,7 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 	// Retrieve the full set of device configs for the driver.
 	configs, err := GetOpaqueDeviceConfigs(
 		configapi.Decoder,
-		DriverName,
+		consts.DriverName,
 		claim.Status.Allocation.Devices.Config,
 	)
 	if err != nil {
@@ -698,11 +700,11 @@ func upsertDeviceClass(clientset *kubernetes.Clientset, name, expr, tpl string) 
 		return err
 	}
 
-	got, getErr := clientset.ResourceV1beta1().DeviceClasses().Get(
+	got, getErr := clientset.ResourceV1().DeviceClasses().Get(
 		context.TODO(), name, metav1.GetOptions{},
 	)
 	if errors.IsNotFound(getErr) {
-		_, createErr := clientset.ResourceV1beta1().DeviceClasses().Create(
+		_, createErr := clientset.ResourceV1().DeviceClasses().Create(
 			context.TODO(), want, metav1.CreateOptions{},
 		)
 		if createErr != nil {
@@ -717,7 +719,7 @@ func upsertDeviceClass(clientset *kubernetes.Clientset, name, expr, tpl string) 
 
 	if !deviceClassEquals(got, want) {
 		want.ObjectMeta.ResourceVersion = got.ObjectMeta.ResourceVersion
-		_, updateErr := clientset.ResourceV1beta1().DeviceClasses().Update(
+		_, updateErr := clientset.ResourceV1().DeviceClasses().Update(
 			context.TODO(), want, metav1.UpdateOptions{},
 		)
 		if updateErr != nil {
@@ -754,7 +756,7 @@ func buildDeviceClass(name, celExpression, tplName string) (*resourceapi.DeviceC
 				{
 					DeviceConfiguration: resourceapi.DeviceConfiguration{
 						Opaque: &resourceapi.OpaqueDeviceConfiguration{
-							Driver: DriverName,
+							Driver: consts.DriverName,
 							Parameters: runtime.RawExtension{
 								Raw: raw,
 							},
@@ -819,10 +821,8 @@ func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *Ph
 	}
 
 	device := resourceapi.Device{
-		Name: deviceName,
-		Basic: &resourceapi.BasicDevice{
-			Attributes: devAttributes,
-		},
+		Name:       deviceName,
+		Attributes: devAttributes,
 	}
 
 	s.allocatable[deviceName] = device

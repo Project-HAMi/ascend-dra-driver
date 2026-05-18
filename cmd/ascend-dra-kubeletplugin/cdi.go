@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"os"
 
+	"Ascend-dra-driver/pkg/consts"
+
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 )
 
 const (
-	cdiVendor           = "k8s." + DriverName
+	cdiVendor           = "k8s." + consts.DriverName
 	cdiClass            = "npu"
 	cdiKind             = cdiVendor + "/" + cdiClass
 	cdiCommonDeviceName = "common"
@@ -43,7 +45,7 @@ func (cdi *CDIHandler) CreateCommonSpecFile() error {
 				ContainerEdits: cdispec.ContainerEdits{
 					Env: []string{
 						fmt.Sprintf("KUBERNETES_NODE_NAME=%s", os.Getenv("NODE_NAME")),
-						fmt.Sprintf("DRA_RESOURCE_DRIVER_NAME=%s", DriverName),
+						fmt.Sprintf("DRA_RESOURCE_DRIVER_NAME=%s", consts.DriverName),
 					},
 				},
 			},

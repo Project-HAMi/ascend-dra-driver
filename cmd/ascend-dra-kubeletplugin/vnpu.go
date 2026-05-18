@@ -257,21 +257,6 @@ func (m *VnpuManager) wholeCardIsAvailable(npu *PhysicalNpuState) bool {
 	return false
 }
 
-func (d *driver) syncAllocatable() {
-	deviceNames := d.getAvailableDeviceNames()
-
-	availableMap := make(map[string]struct{}, len(deviceNames))
-	for _, name := range deviceNames {
-		availableMap[name] = struct{}{}
-	}
-
-	for k := range d.state.allocatable {
-		if _, ok := availableMap[k]; !ok {
-			delete(d.state.allocatable, k)
-		}
-	}
-}
-
 func (d *driver) getAvailableDeviceNames() []string {
 	var deviceNames []string
 	if d.state.vnpuManager != nil {
