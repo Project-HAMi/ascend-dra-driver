@@ -12,13 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-GOLANG_VERSION ?= 1.23.1
+GOLANG_VERSION ?= 1.24.0
+LIBVNPU_BUILD_IMAGE ?= ascendai/cann:9.0.0-devel
 
 DRIVER_NAME := ascend-dra-driver
 MODULE := .
 
 VERSION  ?= v0.1.0
 vVERSION := v$(VERSION:v%=%)
+
+REVISION  ?= unknown
+BUILD_DATE ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+VERSION_PACKAGE := Ascend-dra-driver/pkg/version
 
 VENDOR := example.com
 APIS := gpu/v1alpha1

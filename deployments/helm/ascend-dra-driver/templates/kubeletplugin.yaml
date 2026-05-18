@@ -55,9 +55,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        # Simulated number of devices the example driver will pretend to have.
-        - name: NUM_DEVICES
-          value: "8"
         volumeMounts:
         - name: plugins-registry
           mountPath: /var/lib/kubelet/plugins_registry
@@ -74,10 +71,13 @@ spec:
           readOnly: true
         - name: tmp
           mountPath: /tmp
-        # 添加NPU模板信息文件挂载
         - name: npu-template-info
           mountPath: /etc/npu
           readOnly: true
+        - name: hami-shared-region
+          mountPath: /usr/local/hami-shared-region
+        - name: hami-vnpu-core
+          mountPath: /usr/local/hami-vnpu-core
       volumes:
       - name: plugins-registry
         hostPath:
@@ -100,10 +100,17 @@ spec:
       - name: tmp
         hostPath:
           path: /tmp
-      # 添加NPU模板信息文件存放目录
       - name: npu-template-info
         hostPath:
           path: /etc/npu
+          type: DirectoryOrCreate
+      - name: hami-shared-region 
+        hostPath:
+          path: /usr/local/hami-shared-region
+          type: DirectoryOrCreate
+      - name: hami-vnpu-core
+        hostPath:
+          path: /usr/local/hami-vnpu-core
           type: DirectoryOrCreate
       {{- with .Values.kubeletPlugin.nodeSelector }}
       nodeSelector:

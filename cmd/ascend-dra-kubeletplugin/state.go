@@ -5,23 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"math"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	"k8s.io/utils/ptr"
 
 	"Ascend-dra-driver/pkg/consts"
+	"Ascend-dra-driver/pkg/featuregates"
 
 	configapi "Ascend-dra-driver/api/example.com/resource/gpu/v1alpha1"
 
@@ -85,17 +88,14 @@ func (m *VnpuManager) SetDeviceUpdateCallback(callback DeviceUpdateCallback) {
 	m.deviceUpdateCallback = callback
 }
 
+// PreparedDevice holds the information needed by the kubelet plugin to
+// return a prepared device result to the kubelet.
 type PreparedDevice struct {
-	drapbv1.Device
-	ContainerEdits *cdiapi.ContainerEdits
-}
-
-func (pds PreparedDevices) GetDevices() []*drapbv1.Device {
-	var devices []*drapbv1.Device
-	for _, pd := range pds {
-		devices = append(devices, &pd.Device)
-	}
-	return devices
+	RequestNames []string `json:"request_names,omitempty"`
+	PoolName     string   `json:"pool_name,omitempty"`
+	DeviceName   string   `json:"device_name,omitempty"`
+	CDIDeviceIDs []string `json:"cdi_device_ids,omitempty"`
+	ContainerEdits *cdiapi.ContainerEdits `json:"-"`
 }
 
 type DeviceState struct {
@@ -172,7 +172,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 	return state, nil
 }
 
-func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Device, error) {
+func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) (PreparedDevices, error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -185,7 +185,7 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 	preparedClaims := checkpoint.V1.PreparedClaims
 
 	if preparedClaims[claimUID] != nil {
-		return preparedClaims[claimUID].GetDevices(), nil
+		return preparedClaims[claimUID], nil
 	}
 
 	preparedDevices, err := s.prepareDevices(claim)
@@ -202,7 +202,7 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 		return nil, fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
 
-	return preparedClaims[claimUID].GetDevices(), nil
+	return preparedClaims[claimUID], nil
 }
 
 func (s *DeviceState) Unprepare(claimUID string) error {
@@ -264,8 +264,9 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 	for _, result := range claim.Status.Allocation.Devices.Results {
 		origDevice := result.Device
 
-		// If vnpuManager is available, try to allocate vNPU slices first
-		if s.vnpuManager != nil {
+		// In traditional vNPU mode, try to allocate a vNPU slice.
+		// In HAMi CC mode, skip physical slicing; libvnpu handles runtime sharing.
+		if !featuregates.Enabled(featuregates.HAMivNPUCore) && s.vnpuManager != nil {
 			if err := s.allocateVnpuSlice(&result, configs, origDevice); err != nil {
 				log.Printf("Warning: failed to allocate vNPU slice: %v, attempting to use full card allocation", err)
 			}
@@ -314,9 +315,7 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 		}
 
 		// Merge any new container edits with the overall per device map.
-		for k, v := range containerEdits {
-			perDeviceCDIContainerEdits[k] = v
-		}
+		maps.Copy(perDeviceCDIContainerEdits, containerEdits)
 	}
 
 	// Walk through each config and its associated device allocation results
@@ -325,12 +324,10 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 	for _, results := range configResultsMap {
 		for _, result := range results {
 			device := &PreparedDevice{
-				Device: drapbv1.Device{
-					RequestNames: []string{result.Request},
-					PoolName:     result.Pool,
-					DeviceName:   result.Device,
-					CDIDeviceIDs: s.cdi.GetClaimDevices(string(claim.UID), []string{result.Device}),
-				},
+				RequestNames: []string{result.Request},
+				PoolName:     result.Pool,
+				DeviceName:   result.Device,
+				CDIDeviceIDs: s.cdi.GetClaimDevices(string(claim.UID), []string{result.Device}),
 				ContainerEdits: perDeviceCDIContainerEdits[result.Device],
 			}
 			preparedDevices = append(preparedDevices, device)
@@ -379,10 +376,10 @@ func (s *DeviceState) unprepareDevices(claimUID string, devices PreparedDevices)
 		return nil
 	}
 	for _, dev := range devices {
-		if err := s.vnpuManager.ReleaseSlice(dev.Device.DeviceName); err != nil {
-			log.Printf("Warning: failed to release vNPU slice %s: %v", dev.Device.DeviceName, err)
+		if err := s.vnpuManager.ReleaseSlice(dev.DeviceName); err != nil {
+			log.Printf("Warning: failed to release vNPU slice %s: %v", dev.DeviceName, err)
 		} else {
-			log.Printf("Successfully released vNPU slice: %s", dev.Device.DeviceName)
+			log.Printf("Successfully released vNPU slice: %s", dev.DeviceName)
 		}
 	}
 	return nil
@@ -397,14 +394,53 @@ func (s *DeviceState) unprepareDevices(claimUID string, devices PreparedDevices)
 func (s *DeviceState) applyConfig(config *configapi.GpuConfig, results []*resourceapi.DeviceRequestAllocationResult) (PerDeviceCDIContainerEdits, error) {
 	perDeviceEdits := make(PerDeviceCDIContainerEdits)
 
-	for _, result := range results {
-		envs := buildBaseEnv(result.Device)
-		if s.vnpuManager != nil {
-			envs = s.addVnpuEnvIfSlice(envs, result.Device)
+	if featuregates.Enabled(featuregates.HAMivNPUCore) {
+		// libvnpu.so doesn't support different memeory limit among devices currently
+		err := validateAllocationResultForLibvNPU(results)
+		if err != nil {
+			return perDeviceEdits, err
 		}
-		envs = addSharingStrategyEnv(envs, config, result.Device)
+
+		allocatedDevicesIDs:= []string{}
+		for _, res:= range results {
+			// TODO: Create a function to get DeviceID
+			allocatedDevicesIDs = append(allocatedDevicesIDs, res.Device[4:5])
+		}
+		envs := []string{fmt.Sprintf("ASCEND_VISIBLE_DEVICES=%s", strings.Join(allocatedDevicesIDs, ","))}
 		edits := &cdispec.ContainerEdits{Env: envs}
-		perDeviceEdits[result.Device] = &cdiapi.ContainerEdits{ContainerEdits: edits}
+
+		for idx, res:= range results {
+			if idx > 0 {
+				// TODO: Set cores and limit per Device when libvnpu support it
+				continue
+			}
+			var cores, mem int64
+			for capName, val := range res.ConsumedCapacity {
+				if capName == resourceapi.QualifiedName("cores") {
+					cores, _ = val.AsInt64()
+				}
+				if capName == resourceapi.QualifiedName("memory") {
+					mem, _ = val.AsInt64()
+				}
+			}
+			libvNPUEdits := buildLibvNPUCDIContainerEdits(cores, mem, res.Device[4:5])
+		  edits.Env = append(edits.Env, libvNPUEdits.Env...)
+		  edits.Mounts = append(edits.Mounts, libvNPUEdits.Mounts...)
+		  edits.Hooks = append(edits.Hooks, libvNPUEdits.Hooks...)
+		  edits.DeviceNodes = append(edits.DeviceNodes, libvNPUEdits.DeviceNodes...)
+		}
+	} else {
+	for _, result := range results {
+	  	envs := buildBaseEnv(result.Device)
+	  	if s.vnpuManager != nil {
+	  		envs = s.addVnpuEnvIfSlice(envs, result.Device)
+	  	}
+	  	envs = addSharingStrategyEnv(envs, config, result.Device)
+	  	edits := &cdispec.ContainerEdits{Env: envs}
+
+
+	  	perDeviceEdits[result.Device] = &cdiapi.ContainerEdits{ContainerEdits: edits}
+	  }
 	}
 	return perDeviceEdits, nil
 }
@@ -432,6 +468,69 @@ func (s *DeviceState) addVnpuEnvIfSlice(envs []string, deviceID string) []string
 		log.Printf("Set vNPU specs for device %s: %s", deviceID, vnpuSpec)
 	}
 	return envs
+}
+
+// libvnpuHostPath is the well-known path on the host where the DaemonSet
+// init-container or hostPath volume mounts the libvnpu build artifacts.
+const libvnpuHostPath = "/usr/local/hami-vnpu-core"
+
+func validateAllocationResultForLibvNPU(results []*resourceapi.DeviceRequestAllocationResult) error {
+	capacityMap := map[resourceapi.QualifiedName]resource.Quantity{}
+	for _, result := range results {
+		for name, quantity := range result.ConsumedCapacity {
+			if cap, exists := capacityMap[name]; exists {
+				if !quantity.Equal(cap) {
+					return fmt.Errorf("invalid capacaity %s for %s: capacities must be same across devies currently", name, result.Device)
+				} 
+			} else {
+				capacityMap[name] = quantity
+			}
+		}
+	}
+	return nil
+}
+
+// buildLibvnpuCDIContainerEdits returns CDI container edits that inject the
+// HAMi libvnpu runtime sharing library and its supporting files into a
+// container. This is used when HAMivNPUCore feature gate is enabled.
+func buildLibvNPUCDIContainerEdits(cores, mem int64, devId string) *cdispec.ContainerEdits {
+	var mounts []*cdispec.Mount
+	driverPaths := []string{
+		"/usr/local/bin/npu-smi",
+	  "/etc/ascend_install.info",
+	  "/usr/local/Ascend/driver/lib64/driver",
+	  "/usr/local/Ascend/driver/version.info",
+	}
+	for _, path := range driverPaths {
+		mounts = append(mounts, &cdispec.Mount{
+			HostPath: path,
+			ContainerPath: path,
+			Options: []string{"ro"},
+		})
+	}
+	mounts = append(mounts, &cdispec.Mount{
+		HostPath: "/usr/local/hami-vnpu-core",
+		ContainerPath: "/hami-vnpu-core",
+		Options: []string{"ro"},
+	})
+	mounts = append(mounts, &cdispec.Mount{
+		HostPath: "/usr/local/hami-vnpu-core/ld.so.preload",
+		ContainerPath: "/etc/ld.so.preload",
+		Options: []string{"ro"},
+	})
+	mounts = append(mounts, &cdispec.Mount{
+		HostPath: "/usr/local/hami-shared-region",
+		ContainerPath: "/hami-shared-region",
+		Options: []string{"rw", "nosuid", "nodev", "bind"},
+	})
+	return &cdispec.ContainerEdits{
+		Env: []string{
+			fmt.Sprintf("NPU_MEM_QUOTA=%s", strconv.FormatInt(cores/1024/1024, 10)),
+			fmt.Sprintf("NPU_PRIORITY=%s",  strconv.FormatInt(mem, 10)),
+			fmt.Sprintf("NPU_GLOBAL_SHM_PATH=%s", fmt.Sprintf("/hami-shared-region/%s_global_registry", devId)),
+		},
+		Mounts: mounts,
+	}
 }
 
 // addSharingStrategyEnv adds environment variables for the sharing strategy

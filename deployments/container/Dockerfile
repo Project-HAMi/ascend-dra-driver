@@ -14,26 +14,64 @@
 
 ARG GOLANG_VERSION=undefined
 ARG BASE_IMAGE=undefined
-FROM golang:${GOLANG_VERSION} as build
+ARG LIBVNPU_BUILD_IMAGE=ascendai/cann:9.0.0-devel
+
+# Stage 1: Build HAMi libvnpu (Rust)
+# Uses ${LIBVNPU_BUILD_IMAGE} as the build environment to provide CANN
+# headers/libs required by hami-vnpu-core. rustup is installed on-the-fly
+# so no fixed Rust version needs to be maintained in this Dockerfile.
+FROM ${LIBVNPU_BUILD_IMAGE} AS libvnpu-builder
+
+# Install latest rustup (which brings in the latest stable cargo/rustc)
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path \
+    && chmod -R a+w ${RUSTUP_HOME} ${CARGO_HOME}
+ENV PATH="${CARGO_HOME}/bin:${PATH}"
 
 WORKDIR /build
-COPY . .
+COPY hami-vnpu-core/ ./hami-vnpu-core/
+RUN if [ -f hami-vnpu-core/Cargo.toml ]; then \
+        cd hami-vnpu-core && cargo build --release; \
+    else \
+        echo "WARN: hami-vnpu-core submodule not present, skipping libvnpu build"; \
+    fi
 
+RUN mkdir -p /hami-vnpu-core-assets/lib64 \
+             /hami-vnpu-core-assets/tools \
+             /hami-vnpu-core-assets/conf/ld.so.preload.d
+RUN if [ -f /build/hami-vnpu-core/target/release/libvnpu.so ]; then \
+        cp /build/hami-vnpu-core/target/release/libvnpu.so /hami-vnpu-core-assets/lib64/ && \
+        cp /build/hami-vnpu-core/target/release/limiter /hami-vnpu-core-assets/tools/ && \
+        echo "/usr/local/hami-vnpu-core/lib64/libvnpu.so" \
+          > /hami-vnpu-core-assets/conf/ld.so.preload.d/ascend_vnpu.conf; \
+    fi
+
+# Stage 2: Build Go driver
+FROM golang:${GOLANG_VERSION} AS build
+WORKDIR /build
+COPY . .
 RUN mkdir /artifacts
 RUN make PREFIX=/artifacts cmds
 
+# Stage 3: Final image
 FROM ${BASE_IMAGE}
 
-RUN apt update && apt install -y curl iputils-ping wget
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl iputils-ping wget \
+    && rm -rf /var/lib/apt/lists/*
 
-LABEL io.k8s.display-name="Example Resource Driver for Dynamic Resource Allocation (DRA)"
-LABEL name="Example Resource Driver for Dynamic Resource Allocation (DRA)"
+LABEL io.k8s.display-name="Ascend DRA Resource Driver for Kubernetes"
+LABEL name="Ascend DRA Resource Driver for Kubernetes"
 LABEL vendor="example.com"
 ARG VERSION="N/A"
 LABEL version=${VERSION}
 ARG RELEASE="N/A"
 LABEL release="N/A"
-LABEL summary="Example DRA resource driver for Kubernetes"
+LABEL summary="Ascend DRA resource driver with HAMi libvnpu consumable capacity support"
 LABEL description="See summary"
 
+COPY --from=libvnpu-builder /hami-vnpu-core-assets /usr/local/hami-vnpu-core-assets
 COPY --from=build /artifacts/ascend-dra-kubeletplugin /usr/bin/ascend-dra-kubeletplugin

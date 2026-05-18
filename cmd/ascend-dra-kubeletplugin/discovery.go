@@ -6,7 +6,10 @@ import (
 	"os"
 
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
+
+	"Ascend-dra-driver/pkg/featuregates"
 )
 
 // fetchAiCore attempts to retrieve the total number of AI Cores on the card.
@@ -69,10 +72,19 @@ func getDeviceResources(mgr *AscendManager, devType string, vnpuManager *VnpuMan
 // and enumerates all possible devices to produce an AllocatableDevices map.
 func enumerateAllPossibleDevices() (AllocatableDevices, *VnpuManager, error) {
 	mgr, err := NewAscendManager()
-	allInfo, _ := mgr.NewHwDevManager()
-	vnpuManager, err := NewVnpuManager()
 	if err != nil {
-		log.Printf("Failed to initialize vNPU manager: %v. Only full-card allocation is supported.", err)
+		log.Fatalf("Failed to initialize Ascend Manager: %s", err)
+	}
+	allInfo, err := mgr.NewHwDevManager()
+	if err != nil {
+		log.Fatalf("Failed to initialize HwDev Manager: %s", err)
+	}
+	var vnpuManager *VnpuManager
+	if featuregates.Enabled(featuregates.HAMivNPUCore) {
+	  vnpuManager, err = NewVnpuManager()
+	  if err != nil {
+	  	log.Printf("Failed to initialize vNPU manager: %v. Only full-card allocation is supported.", err)
+	  }
 	}
 
 	alldevices := make(AllocatableDevices)
@@ -87,16 +99,49 @@ func enumerateAllPossibleDevices() (AllocatableDevices, *VnpuManager, error) {
 			DriverDomain + "type":  {StringValue: ptr.To("NPU")},
 		}
 
-		if vnpuManager != nil {
-			vnpuManager.InitPhysicalNpu(deviceName, dev.LogicID, dev.DevType)
-			maxAicore, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
-			devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAicore))}
-			devAttributes[DriverDomain+"memory"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}
+		var capacities map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
+		if featuregates.Enabled(featuregates.HAMivNPUCore) {
+			// maxMemory, err := mgr.GetDeviceMemoryInfo(dev.LogicID)
+			_, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
+			memValue := resource.MustParse(fmt.Sprintf("%dGi", maxMemory))
+			capacities = map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
+				DriverDomain + "memory":  {
+					Value: memValue,
+					RequestPolicy: ptr.To(resourceapi.CapacityRequestPolicy{
+						Default: ptr.To(memValue),
+						ValidRange: ptr.To(resourceapi.CapacityRequestPolicyRange{
+							Min:  ptr.To(resource.MustParse("1Mi")),
+							Max:  ptr.To(memValue),
+							Step: ptr.To(resource.MustParse("1Mi")),
+						}),
+					}),
+				},
+				DriverDomain + "aicore": {
+					Value: *resource.NewQuantity(int64(100), resource.DecimalSI),
+				  RequestPolicy: ptr.To(resourceapi.CapacityRequestPolicy{
+						Default: resource.NewQuantity(int64(100), resource.DecimalSI),
+						ValidRange: ptr.To(resourceapi.CapacityRequestPolicyRange{
+							Min:  resource.NewQuantity(int64(0), resource.DecimalSI),
+						  Max:  resource.NewQuantity(int64(100), resource.DecimalSI),
+						  Step: resource.NewQuantity(int64(1), resource.DecimalSI),
+						}),
+					}),
+				},
+			}
+		} else {
+		  if vnpuManager != nil {
+		  	vnpuManager.InitPhysicalNpu(deviceName, dev.LogicID, dev.DevType)
+				maxAicore, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
+		  	devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAicore))}
+		  	devAttributes[DriverDomain+"memory"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}
+			}
 		}
 
 		device := resourceapi.Device{
-			Name:       deviceName,
-			Attributes: devAttributes,
+			Name:                 deviceName,
+			Attributes:           devAttributes,
+			Capacity:             capacities,
+			AllowMultipleAllocations: ptr.To(featuregates.Enabled(featuregates.HAMivNPUCore)),
 		}
 		alldevices[device.Name] = device
 		log.Printf("Discovered NPU device: %s, Type: NPU, Model: %s", deviceName, dev.DevType)

@@ -101,19 +101,19 @@ func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceap
 }
 
 func (d *driver) prepareResourceClaim(_ context.Context, claim *resourceapi.ResourceClaim) kubeletplugin.PrepareResult {
-	preparedPBs, err := d.state.Prepare(claim)
+	preparedDevices, err := d.state.Prepare(claim)
 	if err != nil {
 		return kubeletplugin.PrepareResult{
 			Err: fmt.Errorf("error preparing devices for claim %v: %w", claim.UID, err),
 		}
 	}
 	var prepared []kubeletplugin.Device
-	for _, preparedPB := range preparedPBs {
+	for _, dev:= range preparedDevices {
 		prepared = append(prepared, kubeletplugin.Device{
-			Requests:     preparedPB.GetRequestNames(),
-			PoolName:     preparedPB.GetPoolName(),
-			DeviceName:   preparedPB.GetDeviceName(),
-			CDIDeviceIDs: preparedPB.GetCDIDeviceIDs(),
+			Requests:     dev.RequestNames,
+			PoolName:     dev.PoolName,
+			DeviceName:   dev.DeviceName,
+			CDIDeviceIDs: dev.CDIDeviceIDs,
 		})
 	}
 

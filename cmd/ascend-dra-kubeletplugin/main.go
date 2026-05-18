@@ -33,6 +33,7 @@ import (
 
 	"Ascend-dra-driver/pkg/consts"
 	"Ascend-dra-driver/pkg/flags"
+	"Ascend-dra-driver/pkg/version"
 )
 
 const (
@@ -44,6 +45,7 @@ const (
 type Flags struct {
 	kubeClientConfig flags.KubeClientConfig
 	loggingConfig    *flags.LoggingConfig
+	featureGateConfig *flags.FeatureGateConfig
 
 	nodeName                      string
 	cdiRoot                       string
@@ -70,8 +72,16 @@ func main() {
 }
 
 func newApp() *cli.App {
+	// Remove the "v" alias from the built-in version flag to avoid conflict
+	// with klog's -v (verbosity) flag, which is registered by LoggingConfig.
+	cli.VersionFlag = &cli.BoolFlag{
+		Name:               "version",
+		Usage:              "print the version",
+		DisableDefaultText: true,
+	}
 	flags := &Flags{
-		loggingConfig: flags.NewLoggingConfig(),
+		loggingConfig:     flags.NewLoggingConfig(),
+		featureGateConfig: flags.NewFeatureGateConfig(),
 	}
 	cliFlags := []cli.Flag{
 		&cli.StringFlag{
@@ -111,6 +121,7 @@ func newApp() *cli.App {
 		},
 	}
 	cliFlags = append(cliFlags, flags.kubeClientConfig.Flags()...)
+	cliFlags = append(cliFlags, flags.featureGateConfig.Flags()...)
 	cliFlags = append(cliFlags, flags.loggingConfig.Flags()...)
 
 	app := &cli.App{
@@ -118,6 +129,7 @@ func newApp() *cli.App {
 		Usage:           "ascend-dra-kubeletplugin implements a DRA driver plugin for Ascend NPU.",
 		ArgsUsage:       " ",
 		HideHelpCommand: true,
+		Version:         version.Get().Version,
 		Flags:           cliFlags,
 		Before: func(c *cli.Context) error {
 			if c.Args().Len() > 0 {

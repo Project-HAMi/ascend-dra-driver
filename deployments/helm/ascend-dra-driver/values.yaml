@@ -54,10 +54,8 @@ kubeletPlugin:
   tolerations: []
   affinity: {}
   containers:
-    init:
-      securityContext: {}
-      resources: {}
     plugin:
       securityContext:
         privileged: true
+        readOnlyRootFilesystem: false
       resources: {}

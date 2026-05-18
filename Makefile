@@ -42,7 +42,9 @@ endif
 cmds: $(CMD_TARGETS)
 $(CMD_TARGETS): cmd-%:
 	CGO_LDFLAGS_ALLOW='-Wl,--unresolved-symbols=ignore-in-object-files' GOOS=$(GOOS) \
-		go build -gcflags="all=-N -l" -ldflags "-X main.version=$(VERSION)" $(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
+		go build -gcflags="all=-N -l" \
+			-ldflags "-X $(VERSION_PACKAGE).version=$(VERSION) -X $(VERSION_PACKAGE).revision=$(REVISION) -X $(VERSION_PACKAGE).buildDate=$(BUILD_DATE)" \
+			$(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
 
 build:
 	GOOS=$(GOOS) go build ./...
@@ -53,6 +55,24 @@ $(EXAMPLE_TARGETS): example-%:
 
 all: check test build binary
 check: $(CHECK_TARGETS)
+
+# Initialize/update git submodules (required for libvnpu build)
+.PHONY: submodules
+submodules:
+	git submodule update --init --recursive
+
+# Build the production container image.
+# Requires submodules for the libvnpu Rust stage.
+.PHONY: image
+image: submodules
+	$(CONTAINER_TOOL) build \
+		--progress=plain \
+		--build-arg GOLANG_VERSION=$(GOLANG_VERSION) \
+		--build-arg BASE_IMAGE=debian:bookworm-slim \
+		--build-arg LIBVNPU_BUILD_IMAGE=$(LIBVNPU_BUILD_IMAGE) \
+		-f deployments/container/Dockerfile \
+		-t $(IMAGE_NAME):$(VERSION) \
+		.
 
 # Update the vendor folder
 vendor:

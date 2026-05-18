@@ -71,6 +71,15 @@ func (am *AscendManager) getMemorySize(cgoVDevInfo npuCommon.VirtualDevInfo) (in
 	return int32(memorySize), nil
 }
 
+// GetDeviceMemoryInfo get npu memory informatio
+func (am *AscendManager) GetDeviceMemoryInfo(logicID int32) (*npuCommon.MemoryInfo, error) {
+	memInfo, err := am.mgr.GetDeviceMemoryInfo(logicID)
+	if err != nil {
+		return nil, err
+	}
+	return memInfo, err
+}
+
 // GetChipMem get chip memory size
 func (am *AscendManager) GetChipMem() (int32, error) {
 	_, logicIDs, err := am.mgr.GetDeviceList()
