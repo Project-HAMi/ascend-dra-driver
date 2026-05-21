@@ -39,14 +39,12 @@ RUN if [ -f hami-vnpu-core/Cargo.toml ]; then \
         echo "WARN: hami-vnpu-core submodule not present, skipping libvnpu build"; \
     fi
 
-RUN mkdir -p /hami-vnpu-core-assets/lib64 \
-             /hami-vnpu-core-assets/tools \
-             /hami-vnpu-core-assets/conf/ld.so.preload.d
+RUN mkdir -p /hami-vnpu-core-assets
 RUN if [ -f /build/hami-vnpu-core/target/release/libvnpu.so ]; then \
-        cp /build/hami-vnpu-core/target/release/libvnpu.so /hami-vnpu-core-assets/lib64/ && \
-        cp /build/hami-vnpu-core/target/release/limiter /hami-vnpu-core-assets/tools/ && \
-        echo "/usr/local/hami-vnpu-core/lib64/libvnpu.so" \
-          > /hami-vnpu-core-assets/conf/ld.so.preload.d/ascend_vnpu.conf; \
+        cp /build/hami-vnpu-core/target/release/libvnpu.so /hami-vnpu-core-assets && \
+        cp /build/hami-vnpu-core/target/release/limiter /hami-vnpu-core-assets && \
+        echo "/hami-vnpu-core/libvnpu.so" \
+          > /hami-vnpu-core-assets/ld.so.preload; \
     fi
 
 # Stage 2: Build Go driver
@@ -75,3 +73,4 @@ LABEL description="See summary"
 
 COPY --from=libvnpu-builder /hami-vnpu-core-assets /usr/local/hami-vnpu-core-assets
 COPY --from=build /artifacts/ascend-dra-kubeletplugin /usr/bin/ascend-dra-kubeletplugin
+RUN chmod +x /usr/local/hami-vnpu-core-assets/limiter

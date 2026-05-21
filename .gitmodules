@@ -1,0 +1,3 @@
+[submodule "hami-vnpu-core"]
+	path = hami-vnpu-core
+	url = https://github.com/Project-HAMi/hami-vnpu-core

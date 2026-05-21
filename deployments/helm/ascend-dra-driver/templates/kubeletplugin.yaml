@@ -33,6 +33,31 @@ spec:
       serviceAccountName: {{ include "ascend-dra-driver.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.kubeletPlugin.podSecurityContext | nindent 8 }}
+      initContainers:
+      - name: init-hami-vnpu-assets
+        image: {{ include "ascend-dra-driver.fullimage" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["sh", "-c"]
+        args:
+        - |
+          ASSETS_PATH="${HAMI_VNPU_ASSETS_PATH:-/usr/local/hami-vnpu-core-assets}"
+          mkdir -p /usr/local/hami-vnpu-core
+          chmod 0775 /usr/local/hami-vnpu-core
+          if [ -d "$ASSETS_PATH" ] && [ "$(ls -A "$ASSETS_PATH")" ]; then
+            cp -r "$ASSETS_PATH"/* /usr/local/hami-vnpu-core/
+          fi
+          mkdir -p /usr/local/hami-shared-region
+          chmod 0777 /usr/local/hami-shared-region
+        env:
+        - name: HAMI_VNPU_ASSETS_PATH
+          value: "/usr/local/hami-vnpu-core-assets"
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: hami-vnpu-core
+          mountPath: /usr/local/hami-vnpu-core
+        - name: hami-shared-region
+          mountPath: /usr/local/hami-shared-region
       containers:
       - name: plugin
         securityContext:

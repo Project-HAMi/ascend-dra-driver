@@ -470,10 +470,6 @@ func (s *DeviceState) addVnpuEnvIfSlice(envs []string, deviceID string) []string
 	return envs
 }
 
-// libvnpuHostPath is the well-known path on the host where the DaemonSet
-// init-container or hostPath volume mounts the libvnpu build artifacts.
-const libvnpuHostPath = "/usr/local/hami-vnpu-core"
-
 func validateAllocationResultForLibvNPU(results []*resourceapi.DeviceRequestAllocationResult) error {
 	capacityMap := map[resourceapi.QualifiedName]resource.Quantity{}
 	for _, result := range results {
