@@ -55,7 +55,8 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        # Simulated number of devices the example driver will pretend to have.
+        # The number of physical NPU cards expected on the node. This should be
+        # updated to match the actual hardware configuration.
         - name: NUM_DEVICES
           value: "8"
         volumeMounts:

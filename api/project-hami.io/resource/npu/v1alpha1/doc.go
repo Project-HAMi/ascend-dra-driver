@@ -15,6 +15,6 @@
  */
 
 // +k8s:deepcopy-gen=package
-// +groupName=gpu.resource.example.com
+// +groupName=npu.project-hami.io
 
 package v1alpha1

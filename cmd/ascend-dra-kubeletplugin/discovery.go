@@ -7,13 +7,15 @@ import (
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/utils/ptr"
+
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 )
 
-// fetchAiCore attempts to retrieve the total number of AI Cores on the card.
-func fetchAiCore(mgr *AscendManager) (int, error) {
-	aiCoreCount, err := mgr.GetChipAiCoreCount()
+// fetchAICore attempts to retrieve the total number of AI Cores on the card.
+func fetchAICore(mgr *AscendManager) (int, error) {
+	aICoreCount, err := mgr.GetChipAICoreCount()
 	if err == nil {
-		return int(aiCoreCount), nil
+		return int(aICoreCount), nil
 	}
 	return 0, err
 }
@@ -29,18 +31,18 @@ func fetchMemory(hdm *AscendManager) (int, error) {
 
 // getDeviceResources returns the maximum AI Core and memory for a device
 // depending on whether it has been split into vNPUs or not.
-func getDeviceResources(mgr *AscendManager, devType string, vnpuManager *VnpuManager, deviceName string) (int, int) {
+func getDeviceResources(mgr *AscendManager, devType string, vnpuManager *VNPUManager, deviceName string) (int, int) {
 	if vnpuManager == nil {
 		return 0, 0
 	}
-	physicalNpu := vnpuManager.PhysicalNpus[deviceName]
+	physicalNpu := vnpuManager.PhysicalNPUs[deviceName]
 	if physicalNpu == nil {
 		return 0, 0
 	}
 
 	// If the device has not been split yet, return the full card resources
 	if len(physicalNpu.AllocatedSlices) == 0 {
-		aiCores, errCore := fetchAiCore(mgr)
+		aiCores, errCore := fetchAICore(mgr)
 		if errCore != nil {
 			log.Printf("Failed to fetch AI Core count: %v", errCore)
 		}
@@ -53,31 +55,31 @@ func getDeviceResources(mgr *AscendManager, devType string, vnpuManager *VnpuMan
 
 	// If the device has already been split, find the largest remaining
 	// AI Core and memory values from the available templates
-	maxAicore, maxMemory := 0, 0
+	maxAICore, maxMemory := 0, 0
 	for _, tpl := range physicalNpu.SupportTemplates {
-		if tpl.Attributes.AICORE > maxAicore {
-			maxAicore = tpl.Attributes.AICORE
+		if tpl.Attributes.AICORE > maxAICore {
+			maxAICore = tpl.Attributes.AICORE
 		}
 		if tpl.Attributes.Memory > maxMemory {
 			maxMemory = tpl.Attributes.Memory
 		}
 	}
-	return maxAicore, maxMemory
+	return maxAICore, maxMemory
 }
 
 // enumerateAllPossibleDevices initializes the devmanager, creates a vNPU manager if possible,
 // and enumerates all possible devices to produce an AllocatableDevices map.
-func enumerateAllPossibleDevices() (AllocatableDevices, *VnpuManager, error) {
+func enumerateAllPossibleDevices() (AllocatableDevices, *VNPUManager, error) {
 	mgr, err := NewAscendManager()
 	allInfo, _ := mgr.NewHwDevManager()
-	vnpuManager, err := NewVnpuManager()
+	vnpuManager, err := NewVNPUManager()
 	if err != nil {
 		log.Printf("Failed to initialize vNPU manager: %v. Only full-card allocation is supported.", err)
 	}
 
 	alldevices := make(AllocatableDevices)
 	for _, dev := range allInfo.AllDevs {
-		deviceName := fmt.Sprintf("npu-%d-0", dev.LogicID)
+		deviceName := fmt.Sprintf("%s%d-0", consts.NPUPrefix, dev.LogicID)
 		uuidStr := fmt.Sprintf("%s-%d", os.Getenv("NODE_NAME"), dev.LogicID)
 
 		devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
@@ -88,9 +90,9 @@ func enumerateAllPossibleDevices() (AllocatableDevices, *VnpuManager, error) {
 		}
 
 		if vnpuManager != nil {
-			vnpuManager.InitPhysicalNpu(deviceName, dev.LogicID, dev.DevType)
-			maxAicore, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
-			devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAicore))}
+			vnpuManager.InitPhysicalNPU(deviceName, dev.LogicID, dev.DevType)
+			maxAICore, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
+			devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
 			devAttributes[DriverDomain+"memory"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}
 		}
 

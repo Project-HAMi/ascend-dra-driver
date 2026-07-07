@@ -26,14 +26,14 @@ FROM ${BASE_IMAGE}
 
 RUN apt update && apt install -y curl iputils-ping wget
 
-LABEL io.k8s.display-name="Example Resource Driver for Dynamic Resource Allocation (DRA)"
-LABEL name="Example Resource Driver for Dynamic Resource Allocation (DRA)"
-LABEL vendor="example.com"
+LABEL io.k8s.display-name="Ascend NPU Resource Driver for Dynamic Resource Allocation (DRA)"
+LABEL name="Ascend NPU Resource Driver for Dynamic Resource Allocation (DRA)"
+LABEL vendor="hami.io"
 ARG VERSION="N/A"
 LABEL version=${VERSION}
 ARG RELEASE="N/A"
 LABEL release="N/A"
-LABEL summary="Example DRA resource driver for Kubernetes"
-LABEL description="See summary"
+LABEL summary="Ascend NPU DRA resource driver for Kubernetes"
+LABEL description="Resource driver for exposing and partitioning Ascend NPUs through Kubernetes DRA"
 
 COPY --from=build /artifacts/ascend-dra-kubeletplugin /usr/bin/ascend-dra-kubeletplugin

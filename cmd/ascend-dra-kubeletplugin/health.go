@@ -34,7 +34,7 @@ import (
 	drapb "k8s.io/kubelet/pkg/apis/dra/v1"
 	registerapi "k8s.io/kubelet/pkg/apis/pluginregistration/v1"
 
-	"Ascend-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 )
 
 type healthcheck struct {

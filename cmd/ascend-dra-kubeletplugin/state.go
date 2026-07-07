@@ -7,7 +7,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -21,9 +20,10 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	"k8s.io/utils/ptr"
 
-	"Ascend-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 
-	configapi "Ascend-dra-driver/api/example.com/resource/gpu/v1alpha1"
+	configapi "github.com/Project-HAMi/hami-dra-driver/api/project-hami.io/resource/npu/v1alpha1"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/npuutil"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
@@ -42,44 +42,44 @@ type OpaqueDeviceConfig struct {
 	Config   runtime.Object
 }
 
-type VnpuTemplateAttribute struct {
+type VNPUTemplateAttribute struct {
 	AICORE int
 	Memory int
 }
 
-type VnpuTemplate struct {
+type VNPUTemplate struct {
 	Name       string
-	Attributes VnpuTemplateAttribute
+	Attributes VNPUTemplateAttribute
 }
 
-type VnpuSlice struct {
+type VNPUSlice struct {
 	SliceID      string
 	TemplateName string
 	Allocated    bool
 	Type         string
 }
 
-type PhysicalNpuState struct {
+type PhysicalNPUState struct {
 	DeviceName       string
 	PhysicalDeviceID string
 	LogicID          int32
 	ModelName        string
-	AvailableSlices  []*VnpuSlice
-	AllocatedSlices  []*VnpuSlice
-	SupportTemplates map[string]*VnpuTemplate
+	AvailableSlices  []*VNPUSlice
+	AllocatedSlices  []*VNPUSlice
+	SupportTemplates map[string]*VNPUTemplate
 	NextSliceIndex   int
 }
 
-type DeviceUpdateCallback func(deviceName string, physicalNpu *PhysicalNpuState)
+type DeviceUpdateCallback func(deviceName string, physicalNpu *PhysicalNPUState)
 
-type VnpuManager struct {
+type VNPUManager struct {
 	sync.Mutex
-	PhysicalNpus         map[string]*PhysicalNpuState
-	Templates            map[string]*VnpuTemplate
+	PhysicalNPUs         map[string]*PhysicalNPUState
+	Templates            map[string]*VNPUTemplate
 	deviceUpdateCallback DeviceUpdateCallback
 }
 
-func (m *VnpuManager) SetDeviceUpdateCallback(callback DeviceUpdateCallback) {
+func (m *VNPUManager) SetDeviceUpdateCallback(callback DeviceUpdateCallback) {
 	m.Lock()
 	defer m.Unlock()
 	m.deviceUpdateCallback = callback
@@ -103,7 +103,7 @@ type DeviceState struct {
 	cdi               *CDIHandler
 	allocatable       AllocatableDevices
 	checkpointManager checkpointmanager.CheckpointManager
-	vnpuManager       *VnpuManager
+	vnpuManager       *VNPUManager
 }
 
 func NewDeviceState(config *Config) (*DeviceState, error) {
@@ -135,7 +135,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 	}
 
 	if vnpuManager != nil {
-		vnpuManager.SetDeviceUpdateCallback(func(deviceName string, physicalNpu *PhysicalNpuState) {
+		vnpuManager.SetDeviceUpdateCallback(func(deviceName string, physicalNpu *PhysicalNPUState) {
 			if added := state.UpdateAllocatableDevice(deviceName, physicalNpu); added {
 				log.Printf("Added new device %s to allocatable devices", deviceName)
 			}
@@ -255,7 +255,7 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 	// the list with len(Requests) == 0 for the lookup below.
 	configs = slices.Insert(configs, 0, &OpaqueDeviceConfig{
 		Requests: []string{},
-		Config:   configapi.DefaultGpuConfig(),
+		Config:   configapi.DefaultNpuConfig(),
 	})
 
 	// Look through the configs and figure out which one will be applied to
@@ -266,7 +266,7 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 
 		// If vnpuManager is available, try to allocate vNPU slices first
 		if s.vnpuManager != nil {
-			if err := s.allocateVnpuSlice(&result, configs, origDevice); err != nil {
+			if err := s.allocateVNPUSlice(&result, configs, origDevice); err != nil {
 				log.Printf("Warning: failed to allocate vNPU slice: %v, attempting to use full card allocation", err)
 			}
 		}
@@ -288,10 +288,10 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 	// config to the set of device allocation results.
 	perDeviceCDIContainerEdits := make(PerDeviceCDIContainerEdits)
 	for c, results := range configResultsMap {
-		// Cast the opaque config to a GpuConfig
-		var config *configapi.GpuConfig
+		// Cast the opaque config to a NpuConfig
+		var config *configapi.NpuConfig
 		switch castConfig := c.(type) {
-		case *configapi.GpuConfig:
+		case *configapi.NpuConfig:
 			config = castConfig
 		default:
 			return nil, fmt.Errorf("runtime object is not a regognized configuration")
@@ -340,35 +340,35 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 	return preparedDevices, nil
 }
 
-// allocateVnpuSlice tries to allocate a vNPU slice based on user requirements
-func (s *DeviceState) allocateVnpuSlice(
+// allocateVNPUSlice tries to allocate a vNPU slice based on user requirements
+func (s *DeviceState) allocateVNPUSlice(
 	result *resourceapi.DeviceRequestAllocationResult,
 	configs []*OpaqueDeviceConfig,
 	origDevice string,
 ) error {
-	var requestedAicore, requestedMemory int
+	var requestedAICore, requestedMemory int
 	var templateName string
 	for _, oc := range configs {
-		if gpuConfig, ok := oc.Config.(*configapi.GpuConfig); ok {
-			if gpuConfig.VnpuSpec != nil && gpuConfig.VnpuSpec.TemplateName != "" {
-				templateName = gpuConfig.VnpuSpec.TemplateName
+		if gpuConfig, ok := oc.Config.(*configapi.NpuConfig); ok {
+			if gpuConfig.VNPUSpec != nil && gpuConfig.VNPUSpec.TemplateName != "" {
+				templateName = gpuConfig.VNPUSpec.TemplateName
 				if tpl, found := s.vnpuManager.Templates[templateName]; found {
-					requestedAicore = tpl.Attributes.AICORE
+					requestedAICore = tpl.Attributes.AICORE
 					requestedMemory = tpl.Attributes.Memory
 					log.Printf("Obtained resource requirements from template %s: AICORE=%d, Memory=%dGB",
-						templateName, requestedAicore, requestedMemory)
+						templateName, requestedAICore, requestedMemory)
 					break
 				}
 			}
 		}
 	}
-	slice, err := s.vnpuManager.AllocateSlice(origDevice, requestedAicore, requestedMemory)
+	slice, err := s.vnpuManager.AllocateSlice(origDevice, requestedAICore, requestedMemory)
 	if err != nil {
 		return err
 	}
 	result.Device = slice.SliceID
 	log.Printf("Successfully allocated vNPU slice for device %s: %s (template: %s, AICORE: %d, Memory: %dGB)",
-		origDevice, slice.SliceID, templateName, requestedAicore, requestedMemory)
+		origDevice, slice.SliceID, templateName, requestedAICore, requestedMemory)
 	return nil
 }
 
@@ -390,17 +390,17 @@ func (s *DeviceState) unprepareDevices(claimUID string, devices PreparedDevices)
 
 // applyConfig applies a configuration to a set of device allocation results.
 //
-// In this example driver there is no actual configuration applied. We simply
-// define a set of environment variables to be injected into the containers
-// that include a given device. A real driver would likely need to do some sort
-// of hardware configuration as well, based on the config passed in.
-func (s *DeviceState) applyConfig(config *configapi.GpuConfig, results []*resourceapi.DeviceRequestAllocationResult) (PerDeviceCDIContainerEdits, error) {
+// For the Ascend NPU driver this means emitting environment variables that
+// describe the selected sharing strategy and, for vNPU slices, the slice
+// specification. The Ascend runtime performs the actual hardware-level
+// configuration based on these values and the allocated device.
+func (s *DeviceState) applyConfig(config *configapi.NpuConfig, results []*resourceapi.DeviceRequestAllocationResult) (PerDeviceCDIContainerEdits, error) {
 	perDeviceEdits := make(PerDeviceCDIContainerEdits)
 
 	for _, result := range results {
 		envs := buildBaseEnv(result.Device)
 		if s.vnpuManager != nil {
-			envs = s.addVnpuEnvIfSlice(envs, result.Device)
+			envs = s.addVNPUEnvIfSlice(envs, result.Device)
 		}
 		envs = addSharingStrategyEnv(envs, config, result.Device)
 		edits := &cdispec.ContainerEdits{Env: envs}
@@ -411,18 +411,23 @@ func (s *DeviceState) applyConfig(config *configapi.GpuConfig, results []*resour
 
 // buildBaseEnv constructs basic environment variables such as ASCEND_VISIBLE_DEVICES
 func buildBaseEnv(deviceName string) []string {
+	dn, err := npuutil.ParseDeviceName(deviceName)
+	if err != nil {
+		log.Printf("Warning: invalid NPU device name %q: %v", deviceName, err)
+		return nil
+	}
 	return []string{
-		fmt.Sprintf("ASCEND_VISIBLE_DEVICES=%s", deviceName[4:5]),
+		fmt.Sprintf("ASCEND_VISIBLE_DEVICES=%s", dn.VisibleDevice()),
 	}
 }
 
-// addVnpuEnvIfSlice adds ASCEND_VNPU_SPECS if it is a slice format npu-x-y
-func (s *DeviceState) addVnpuEnvIfSlice(envs []string, deviceID string) []string {
-	r := regexp.MustCompile(`^npu-(\d+)-(\d+)$`)
-	if !r.MatchString(deviceID) {
+// addVNPUEnvIfSlice adds ASCEND_VNPU_SPECS if it is a slice format npu-x-y.
+func (s *DeviceState) addVNPUEnvIfSlice(envs []string, deviceID string) []string {
+	dn, err := npuutil.ParseDeviceName(deviceID)
+	if err != nil || !dn.IsSlice() {
 		return envs
 	}
-	vnpuSpec, err := s.vnpuManager.GetVnpuSpecsEnv(deviceID)
+	vnpuSpec, err := s.vnpuManager.GetVNPUSpecsEnv(deviceID)
 	if err != nil {
 		log.Printf("Warning: failed to get vNPU specs: %v", err)
 		return envs
@@ -435,21 +440,27 @@ func (s *DeviceState) addVnpuEnvIfSlice(envs []string, deviceID string) []string
 }
 
 // addSharingStrategyEnv adds environment variables for the sharing strategy
-func addSharingStrategyEnv(envs []string, config *configapi.GpuConfig, deviceName string) []string {
+func addSharingStrategyEnv(envs []string, config *configapi.NpuConfig, deviceName string) []string {
 	if config.Sharing == nil {
 		return envs
 	}
-	envs = append(envs, fmt.Sprintf("NPU_DEVICE_%s_SHARING_STRATEGY=%s", deviceName[4:], config.Sharing.Strategy))
+	dn, err := npuutil.ParseDeviceName(deviceName)
+	if err != nil {
+		log.Printf("Warning: invalid NPU device name %q for sharing strategy env: %v", deviceName, err)
+		return envs
+	}
+	suffix := dn.EnvSuffix()
+	envs = append(envs, fmt.Sprintf("NPU_DEVICE_%s_SHARING_STRATEGY=%s", suffix, config.Sharing.Strategy))
 	switch {
 	case config.Sharing.IsTimeSlicing():
 		tsconfig, _ := config.Sharing.GetTimeSlicingConfig()
 		if tsconfig != nil {
-			envs = append(envs, fmt.Sprintf("NPU_DEVICE_%s_TIMESLICE_INTERVAL=%v", deviceName[4:], tsconfig.Interval))
+			envs = append(envs, fmt.Sprintf("NPU_DEVICE_%s_TIMESLICE_INTERVAL=%v", suffix, tsconfig.Interval))
 		}
 	case config.Sharing.IsSpacePartitioning():
 		spconfig, _ := config.Sharing.GetSpacePartitioningConfig()
 		if spconfig != nil {
-			envs = append(envs, fmt.Sprintf("NPU_DEVICE_%s_PARTITION_COUNT=%v", deviceName[4:], spconfig.PartitionCount))
+			envs = append(envs, fmt.Sprintf("NPU_DEVICE_%s_PARTITION_COUNT=%v", suffix, spconfig.PartitionCount))
 		}
 	}
 	return envs
@@ -521,22 +532,22 @@ func GetOpaqueDeviceConfigs(
 }
 
 // AllocateSlice allocates a vNPU slice based on the requested computational resources
-func (m *VnpuManager) AllocateSlice(deviceName string, requestedAicore, requestedMemory int) (*VnpuSlice, error) {
+func (m *VNPUManager) AllocateSlice(deviceName string, requestedAICore, requestedMemory int) (*VNPUSlice, error) {
 	m.Lock()
 	defer m.Unlock()
-	log.Printf("Attempting to allocate vNPU slice, device: %s, requirements: AICORE=%d, Memory=%dGB", deviceName, requestedAicore, requestedMemory)
-	physicalNpu, ok := m.PhysicalNpus[deviceName]
+	log.Printf("Attempting to allocate vNPU slice, device: %s, requirements: AICORE=%d, Memory=%dGB", deviceName, requestedAICore, requestedMemory)
+	physicalNpu, ok := m.PhysicalNPUs[deviceName]
 	if !ok {
 		return nil, fmt.Errorf("physical NPU not found: %s", deviceName)
 	}
-	if requestedAicore == 0 && requestedMemory == 0 {
+	if requestedAICore == 0 && requestedMemory == 0 {
 		return m.allocateFullCard(physicalNpu, deviceName)
 	}
-	return m.allocateSliceByTemplate(physicalNpu, deviceName, requestedAicore, requestedMemory)
+	return m.allocateSliceByTemplate(physicalNpu, deviceName, requestedAICore, requestedMemory)
 }
 
 // allocateFullCard allocates the entire card
-func (m *VnpuManager) allocateFullCard(npu *PhysicalNpuState, deviceName string) (*VnpuSlice, error) {
+func (m *VNPUManager) allocateFullCard(npu *PhysicalNPUState, deviceName string) (*VNPUSlice, error) {
 	for i, slice := range npu.AvailableSlices {
 		if slice.SliceID == deviceName && !slice.Allocated {
 			slice.Allocated = true
@@ -550,17 +561,17 @@ func (m *VnpuManager) allocateFullCard(npu *PhysicalNpuState, deviceName string)
 }
 
 // allocateSliceByTemplate allocates a vNPU slice based on template attributes
-func (m *VnpuManager) allocateSliceByTemplate(
-	npu *PhysicalNpuState,
+func (m *VNPUManager) allocateSliceByTemplate(
+	npu *PhysicalNPUState,
 	deviceName string,
-	requestedAicore, requestedMemory int,
-) (*VnpuSlice, error) {
-	var bestTemplate *VnpuTemplate
+	requestedAICore, requestedMemory int,
+) (*VNPUSlice, error) {
+	var bestTemplate *VNPUTemplate
 	bestDiff := math.MaxInt32
 	for _, template := range npu.SupportTemplates {
-		if template.Attributes.AICORE >= requestedAicore &&
+		if template.Attributes.AICORE >= requestedAICore &&
 			template.Attributes.Memory >= requestedMemory {
-			diff := (template.Attributes.AICORE - requestedAicore) + (template.Attributes.Memory - requestedMemory)
+			diff := (template.Attributes.AICORE - requestedAICore) + (template.Attributes.Memory - requestedMemory)
 			if diff < bestDiff {
 				bestDiff = diff
 				bestTemplate = template
@@ -568,10 +579,10 @@ func (m *VnpuManager) allocateSliceByTemplate(
 		}
 	}
 	if bestTemplate == nil {
-		return nil, fmt.Errorf("no partition scheme found that meets the requirements: AICORE>=%d, Memory>=%dGB", requestedAicore, requestedMemory)
+		return nil, fmt.Errorf("no partition scheme found that meets the requirements: AICORE>=%d, Memory>=%dGB", requestedAICore, requestedMemory)
 	}
 
-	var currentSlice *VnpuSlice
+	var currentSlice *VNPUSlice
 	var sliceIndex int
 	for i, slice := range npu.AvailableSlices {
 		if slice.SliceID == deviceName && !slice.Allocated {
@@ -592,8 +603,8 @@ func (m *VnpuManager) allocateSliceByTemplate(
 
 	npu.AllocatedSlices = append(npu.AllocatedSlices, currentSlice)
 
-	newSliceID := fmt.Sprintf("npu-%d-%d", npu.LogicID, npu.NextSliceIndex)
-	newSlice := &VnpuSlice{
+	newSliceID := fmt.Sprintf("%s%d-%d", consts.NPUPrefix, npu.LogicID, npu.NextSliceIndex)
+	newSlice := &VNPUSlice{
 		SliceID:      newSliceID,
 		TemplateName: "",
 		Allocated:    false,
@@ -615,7 +626,7 @@ func (m *VnpuManager) allocateSliceByTemplate(
 }
 
 // CreatePredefinedDeviceClasses idempotently creates/updates DeviceClasses
-func CreatePredefinedDeviceClasses(vnpuManager *VnpuManager) error {
+func CreatePredefinedDeviceClasses(vnpuManager *VNPUManager) error {
 	log.Printf("Starting to create predefined DeviceClasses...")
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -627,9 +638,9 @@ func CreatePredefinedDeviceClasses(vnpuManager *VnpuManager) error {
 	}
 
 	uniqueModels := make(map[string]bool)
-	uniqueTemplates := make(map[string]*VnpuTemplate)
+	uniqueTemplates := make(map[string]*VNPUTemplate)
 
-	for _, pNpu := range vnpuManager.PhysicalNpus {
+	for _, pNpu := range vnpuManager.PhysicalNPUs {
 		modelName := pNpu.ModelName
 		if modelName == "" {
 			modelName = "unknown"
@@ -656,7 +667,7 @@ func CreatePredefinedDeviceClasses(vnpuManager *VnpuManager) error {
 			if err := createMemoryDeviceClass(clientset, modelName, tpl); err != nil {
 				log.Printf("Failed to create/update Memory DeviceClass: %v", err)
 			}
-			if err := createAicoreDeviceClass(clientset, modelName, tpl); err != nil {
+			if err := createAICoreDeviceClass(clientset, modelName, tpl); err != nil {
 				log.Printf("Failed to create/update AICORE DeviceClass: %v", err)
 			}
 		}
@@ -669,25 +680,25 @@ func CreatePredefinedDeviceClasses(vnpuManager *VnpuManager) error {
 // createFullCardDeviceClass creates or updates a "full-card" DeviceClass
 func createFullCardDeviceClass(clientset *kubernetes.Clientset, modelName string) error {
 	safeModel := toSafeModelName(modelName)
-	dcName := fmt.Sprintf("npu-%s.example.com", safeModel)
+	dcName := fmt.Sprintf("%s%s%s%s", consts.DeviceClassNamePrefix, safeModel, consts.DeviceClassNameSuffix, "")
 	expr := fmt.Sprintf(`device.attributes["%s"].model == "%s" && device.attributes["%s"].type == "NPU"`,
 		DriverDomainName, modelName, DriverDomainName)
 	return upsertDeviceClass(clientset, dcName, expr, "")
 }
 
 // createMemoryDeviceClass creates or updates a DeviceClass based on memory
-func createMemoryDeviceClass(clientset *kubernetes.Clientset, modelName string, tpl *VnpuTemplate) error {
+func createMemoryDeviceClass(clientset *kubernetes.Clientset, modelName string, tpl *VNPUTemplate) error {
 	safeModel := toSafeModelName(modelName)
-	dcName := fmt.Sprintf("npu-%s-mem%d.example.com", safeModel, tpl.Attributes.Memory)
+	dcName := fmt.Sprintf("%s%s-mem%d%s", consts.DeviceClassNamePrefix, safeModel, tpl.Attributes.Memory, consts.DeviceClassNameSuffix)
 	expr := fmt.Sprintf(`device.attributes["%s"].memory >= %d && device.attributes["%s"].model == "%s"`,
 		DriverDomainName, tpl.Attributes.Memory, DriverDomainName, modelName)
 	return upsertDeviceClass(clientset, dcName, expr, tpl.Name)
 }
 
-// createAicoreDeviceClass creates or updates a DeviceClass based on AICORE
-func createAicoreDeviceClass(clientset *kubernetes.Clientset, modelName string, tpl *VnpuTemplate) error {
+// createAICoreDeviceClass creates or updates a DeviceClass based on AICORE
+func createAICoreDeviceClass(clientset *kubernetes.Clientset, modelName string, tpl *VNPUTemplate) error {
 	safeModel := toSafeModelName(modelName)
-	dcName := fmt.Sprintf("npu-%s-aicore%d.example.com", safeModel, tpl.Attributes.AICORE)
+	dcName := fmt.Sprintf("%s%s-aicore%d%s", consts.DeviceClassNamePrefix, safeModel, tpl.Attributes.AICORE, consts.DeviceClassNameSuffix)
 	expr := fmt.Sprintf(`device.attributes["%s"].aicore >= %d && device.attributes["%s"].model == "%s"`,
 		DriverDomainName, tpl.Attributes.AICORE, DriverDomainName, modelName)
 	return upsertDeviceClass(clientset, dcName, expr, tpl.Name)
@@ -734,8 +745,8 @@ func upsertDeviceClass(clientset *kubernetes.Clientset, name, expr, tpl string) 
 // buildDeviceClass generates the target DeviceClass
 func buildDeviceClass(name, celExpression, tplName string) (*resourceapi.DeviceClass, error) {
 	paramObj := map[string]interface{}{
-		"apiVersion": "gpu.resource.example.com/v1alpha1",
-		"kind":       "GpuConfig",
+		"apiVersion": "npu.project-hami.io/v1alpha1",
+		"kind":       "NpuConfig",
 		"vnpuSpec": map[string]interface{}{
 			"templateName": tplName,
 		},
@@ -782,7 +793,7 @@ func toSafeModelName(model string) string {
 	return strings.ToLower(model)
 }
 
-func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *PhysicalNpuState) bool {
+func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *PhysicalNPUState) bool {
 	_, exists := s.allocatable[deviceName]
 	if exists {
 		return false
@@ -806,17 +817,17 @@ func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *Ph
 	}
 
 	if s.vnpuManager != nil {
-		maxAicore, maxMemory := 0, 0
+		maxAICore, maxMemory := 0, 0
 		for _, tpl := range physicalNpu.SupportTemplates {
-			if tpl.Attributes.AICORE > maxAicore {
-				maxAicore = tpl.Attributes.AICORE
+			if tpl.Attributes.AICORE > maxAICore {
+				maxAICore = tpl.Attributes.AICORE
 			}
 			if tpl.Attributes.Memory > maxMemory {
 				maxMemory = tpl.Attributes.Memory
 			}
 		}
 
-		devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAicore))}
+		devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
 		devAttributes[DriverDomain+"memory"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}
 	}
 

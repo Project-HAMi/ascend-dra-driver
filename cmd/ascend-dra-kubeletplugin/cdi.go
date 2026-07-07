@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"Ascend-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"

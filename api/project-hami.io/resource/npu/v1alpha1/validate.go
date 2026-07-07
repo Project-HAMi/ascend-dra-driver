@@ -20,13 +20,13 @@ import (
 	"fmt"
 )
 
-// Validate ensures that GpuSharingStrategy has a valid set of values.
-func (s GpuSharingStrategy) Validate() error {
+// Validate ensures that NpuSharingStrategy has a valid set of values.
+func (s NpuSharingStrategy) Validate() error {
 	switch s {
 	case TimeSlicingStrategy, SpacePartitioningStrategy:
 		return nil
 	}
-	return fmt.Errorf("unknown GPU sharing strategy: %v", s)
+	return fmt.Errorf("unknown NPU sharing strategy: %v", s)
 }
 
 // Validate ensures that TimeSliceInterval has a valid set of values.
@@ -51,8 +51,8 @@ func (c *SpacePartitioningConfig) Validate() error {
 	return nil
 }
 
-// Validate ensures that GpuSharing has a valid set of values.
-func (s *GpuSharing) Validate() error {
+// Validate ensures that NpuSharing has a valid set of values.
+func (s *NpuSharing) Validate() error {
 	if err := s.Strategy.Validate(); err != nil {
 		return err
 	}
@@ -62,11 +62,11 @@ func (s *GpuSharing) Validate() error {
 	case s.IsSpacePartitioning():
 		return s.SpacePartitioningConfig.Validate()
 	}
-	return fmt.Errorf("invalid GPU sharing settings: %v", s)
+	return fmt.Errorf("invalid NPU sharing settings: %v", s)
 }
 
-// Validate ensures that GpuConfig has a valid set of values.
-func (c *GpuConfig) Validate() error {
+// Validate ensures that NpuConfig has a valid set of values.
+func (c *NpuConfig) Validate() error {
 	if c.Sharing == nil {
 		return fmt.Errorf("no sharing strategy set")
 	}
@@ -78,8 +78,8 @@ func (c *GpuConfig) Validate() error {
 	return nil
 }
 
-// Validate ensures that VnpuSpec has a valid set of values.
-func (v *VnpuSpec) Validate() error {
+// Validate ensures that VNPUSpec has a valid set of values.
+func (v *VNPUSpec) Validate() error {
 	if v.TemplateName == "" {
 		return fmt.Errorf("vNPU template name is required")
 	}

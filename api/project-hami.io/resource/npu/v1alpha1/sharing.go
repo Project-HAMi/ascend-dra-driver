@@ -22,8 +22,8 @@ import (
 
 // These constants represent the different Sharing strategies.
 const (
-	TimeSlicingStrategy       GpuSharingStrategy = "TimeSlicing"
-	SpacePartitioningStrategy GpuSharingStrategy = "SpacePartitioning"
+	TimeSlicingStrategy       NpuSharingStrategy = "TimeSlicing"
+	SpacePartitioningStrategy NpuSharingStrategy = "SpacePartitioning"
 )
 
 // These constants represent the different TimeSlicing configurations.
@@ -34,17 +34,17 @@ const (
 	LongTimeSlice    TimeSliceInterval = "Long"
 )
 
-// GpuSharingStrategy defines the valid Sharing strategies as a string.
-type GpuSharingStrategy string
+// NpuSharingStrategy defines the valid Sharing strategies as a string.
+type NpuSharingStrategy string
 
 // TimeSliceInterval defines the valid timeslice interval as a string.
 type TimeSliceInterval string
 
-// GpuSharing holds the current sharing strategy for GPUs and its settings.
+// NpuSharing holds the current sharing strategy for NPUs and its settings.
 // If DeviceClass and ResourceClaim set this, then the strategy from the claim
 // is used. If multiple configurations set this, then the last one is used.
-type GpuSharing struct {
-	Strategy                GpuSharingStrategy       `json:"strategy"`
+type NpuSharing struct {
+	Strategy                NpuSharingStrategy       `json:"strategy"`
 	TimeSlicingConfig       *TimeSlicingConfig       `json:"timeSlicingConfig,omitempty"`
 	SpacePartitioningConfig *SpacePartitioningConfig `json:"spacePartitioningConfig,omitempty"`
 }
@@ -57,13 +57,13 @@ type TimeSlicingConfig struct {
 // SpacePartitioningConfig provides the configuring for the SpacePartitioning strategy.
 type SpacePartitioningConfig struct {
 	// SliceCount indicates how many equally sized (memory and compute) slices
-	// the GPU should be divided into. Each client that attaches will get
+	// the NPU should be divided into. Each client that attaches will get
 	// access to exactly one of these slices.
 	PartitionCount int `json:"partitionCount,omitempty"`
 }
 
 // IsTimeSlicing checks if the TimeSlicing strategy is applied.
-func (s *GpuSharing) IsTimeSlicing() bool {
+func (s *NpuSharing) IsTimeSlicing() bool {
 	if s == nil {
 		return false
 	}
@@ -71,7 +71,7 @@ func (s *GpuSharing) IsTimeSlicing() bool {
 }
 
 // IsSpacePartitioning checks if the SpacePartitioning strategy is applied.
-func (s *GpuSharing) IsSpacePartitioning() bool {
+func (s *NpuSharing) IsSpacePartitioning() bool {
 	if s == nil {
 		return false
 	}
@@ -79,7 +79,7 @@ func (s *GpuSharing) IsSpacePartitioning() bool {
 }
 
 // GetTimeSlicingConfig returns the timeslicing config that applies to the given strategy.
-func (s *GpuSharing) GetTimeSlicingConfig() (*TimeSlicingConfig, error) {
+func (s *NpuSharing) GetTimeSlicingConfig() (*TimeSlicingConfig, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no sharing set to get config from")
 	}
@@ -93,7 +93,7 @@ func (s *GpuSharing) GetTimeSlicingConfig() (*TimeSlicingConfig, error) {
 }
 
 // GetSpacePartitioningConfig returns the SpacePartitioning config that applies to the given strategy.
-func (s *GpuSharing) GetSpacePartitioningConfig() (*SpacePartitioningConfig, error) {
+func (s *NpuSharing) GetSpacePartitioningConfig() (*SpacePartitioningConfig, error) {
 	if s == nil {
 		return nil, fmt.Errorf("no sharing set to get config from")
 	}

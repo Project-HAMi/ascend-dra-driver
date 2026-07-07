@@ -1,4 +1,4 @@
-# Default values for draexample--driver.
+# Default values for ascend-dra-driver.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
@@ -11,6 +11,7 @@ allowDefaultNamespace: false
 
 imagePullSecrets: []
 image:
+  # TODO: replace with your own container registry before deploying.
   repository: registry.example.com/ascend-dra-driver
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.

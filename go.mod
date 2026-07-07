@@ -1,4 +1,4 @@
-module Ascend-dra-driver
+module github.com/Project-HAMi/hami-dra-driver
 
 go 1.24.0
 

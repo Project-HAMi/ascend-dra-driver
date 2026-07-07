@@ -23,41 +23,41 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestGpuConfigValidate(t *testing.T) {
+func TestNpuConfigValidate(t *testing.T) {
 	tests := map[string]struct {
-		gpuConfig *GpuConfig
+		npuConfig *NpuConfig
 		expected  error
 	}{
-		"empty GpuConfig": {
-			gpuConfig: &GpuConfig{},
+		"empty NpuConfig": {
+			npuConfig: &NpuConfig{},
 			expected:  errors.New("no sharing strategy set"),
 		},
-		"empty GpuConfig.Sharing": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{},
+		"empty NpuConfig.Sharing": {
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{},
 			},
-			expected: errors.New("unknown GPU sharing strategy: "),
+			expected: errors.New("unknown NPU sharing strategy: "),
 		},
-		"unknown GPU sharing strategy": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+		"unknown NPU sharing strategy": {
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: "unknown",
 				},
 			},
-			expected: errors.New("unknown GPU sharing strategy: unknown"),
+			expected: errors.New("unknown NPU sharing strategy: unknown"),
 		},
-		"empty GpuConfig.Sharing.TimeSlicingConfig": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+		"empty NpuConfig.Sharing.TimeSlicingConfig": {
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy:          TimeSlicingStrategy,
 					TimeSlicingConfig: &TimeSlicingConfig{},
 				},
 			},
 			expected: errors.New("unknown time-slice interval: "),
 		},
-		"valid GpuConfig with TimeSlicing": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+		"valid NpuConfig with TimeSlicing": {
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: TimeSlicingStrategy,
 					TimeSlicingConfig: &TimeSlicingConfig{
 						Interval: MediumTimeSlice,
@@ -66,9 +66,9 @@ func TestGpuConfigValidate(t *testing.T) {
 			},
 			expected: nil,
 		},
-		"negative GpuConfig.Sharing.SpacePartitioningConfig.PartitionCount": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+		"negative NpuConfig.Sharing.SpacePartitioningConfig.PartitionCount": {
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: SpacePartitioningStrategy,
 					SpacePartitioningConfig: &SpacePartitioningConfig{
 						PartitionCount: -1,
@@ -77,9 +77,9 @@ func TestGpuConfigValidate(t *testing.T) {
 			},
 			expected: errors.New("invalid partition count: -1"),
 		},
-		"valid GpuConfig with SpacePartitioning": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+		"valid NpuConfig with SpacePartitioning": {
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: SpacePartitioningStrategy,
 					SpacePartitioningConfig: &SpacePartitioningConfig{
 						PartitionCount: 1000,
@@ -88,13 +88,13 @@ func TestGpuConfigValidate(t *testing.T) {
 			},
 			expected: nil,
 		},
-		"default GpuConfig": {
-			gpuConfig: DefaultGpuConfig(),
+		"default NpuConfig": {
+			npuConfig: DefaultNpuConfig(),
 			expected:  nil,
 		},
 		"invalid TimeSlicingConfig ignored with strategy is SpacePartitioning": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy:          SpacePartitioningStrategy,
 					TimeSlicingConfig: &TimeSlicingConfig{},
 					SpacePartitioningConfig: &SpacePartitioningConfig{
@@ -105,8 +105,8 @@ func TestGpuConfigValidate(t *testing.T) {
 			expected: nil,
 		},
 		"invalid SpacePartitioningConfig ignored with strategy is TimeSlicing": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: TimeSlicingStrategy,
 					TimeSlicingConfig: &TimeSlicingConfig{
 						Interval: MediumTimeSlice,
@@ -122,7 +122,7 @@ func TestGpuConfigValidate(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := test.gpuConfig.Validate()
+			err := test.npuConfig.Validate()
 			assert.Equal(t, test.expected, err)
 		})
 	}

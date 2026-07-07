@@ -31,13 +31,13 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 
-	"Ascend-dra-driver/pkg/consts"
-	"Ascend-dra-driver/pkg/flags"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/flags"
 )
 
 const (
-	DriverDomainName           = "npu.example.com"
-	DriverDomain               = "npu.example.com/"
+	DriverDomainName           = "npu.project-hami.io"
+	DriverDomain               = "npu.project-hami.io/"
 	DriverPluginCheckpointFile = "checkpoint.json"
 )
 
