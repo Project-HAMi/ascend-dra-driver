@@ -3,3 +3,6 @@
 	url = https://gitcode.com/Ascend/mind-cluster.git
 	branch = v26.0.1
 	sparseCheckout = true
+[submodule "hami-vnpu-core"]
+	path = hami-vnpu-core
+	url = https://github.com/Project-HAMi/hami-vnpu-core

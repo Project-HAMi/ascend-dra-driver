@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 The Kubernetes Authors.
+ * Copyright 2025 The HAMi Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,41 +17,32 @@
 package flags
 
 import (
+	"strings"
+
 	"github.com/spf13/pflag"
 	"github.com/urfave/cli/v2"
 
-	logsapi "k8s.io/component-base/logs/api/v1"
-
 	"github.com/Project-HAMi/hami-dra-driver/pkg/featuregates"
-
-	_ "k8s.io/component-base/logs/json/register" // for JSON log output support
 )
 
-type LoggingConfig struct {
-	config *logsapi.LoggingConfiguration
+type FeatureGateConfig struct{}
+
+func NewFeatureGateConfig() *FeatureGateConfig {
+	return &FeatureGateConfig{}
 }
 
-func NewLoggingConfig() *LoggingConfig {
-	l := &LoggingConfig{
-		config: logsapi.NewLoggingConfiguration(),
-	}
-	return l
-}
-
-// Apply should be called in a cli.App.Before directly after parsing command
-// line flags and before running any code which emits log entries.
-func (l *LoggingConfig) Apply() error {
-	return logsapi.ValidateAndApply(l.config, featuregates.FeatureGates())
-}
-
-// Flags returns the flags for the configuration.
-func (l *LoggingConfig) Flags() []cli.Flag {
+func (f *FeatureGateConfig) Flags() []cli.Flag {
 	var fs pflag.FlagSet
-	logsapi.AddFlags(l.config, &fs)
+	fs.AddFlag(&pflag.Flag{
+		Name: "feature-gates",
+		Usage: "A set of key=value pairs that describe feature gates for alpha/experimental features. " +
+			"Options are:\n     " + strings.Join(featuregates.KnownFeatures(), "\n     "),
+		Value: featuregates.FeatureGates().(pflag.Value), //nolint:forcetypeassert
+	})
 
 	var flags []cli.Flag
 	fs.VisitAll(func(flag *pflag.Flag) {
-		flags = append(flags, pflagToCLI(flag, "Logging:"))
+		flags = append(flags, pflagToCLI(flag, "Feature Gates:"))
 	})
 	return flags
 }

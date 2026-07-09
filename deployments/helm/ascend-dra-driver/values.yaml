@@ -56,7 +56,8 @@ kubeletPlugin:
   affinity: {}
   containers:
     init:
-      securityContext: {}
+      securityContext:
+        privileged: true
       resources: {}
     plugin:
       securityContext:

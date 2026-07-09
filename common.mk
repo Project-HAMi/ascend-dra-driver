@@ -13,12 +13,16 @@
 # limitations under the License.
 
 GOLANG_VERSION ?= 1.26.0
+LIBVNPU_BUILD_IMAGE ?= ascendai/cann:9.0.0-devel
 
 DRIVER_NAME := ascend-dra-driver
 MODULE := .
 
 VERSION  ?= v0.1.0
 vVERSION := v$(VERSION:v%=%)
+REVISION ?= unknown
+BUILD_DATE ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+VERSION_PACKAGE := github.com/Project-HAMi/hami-dra-driver/pkg/version
 
 VENDOR := project-hami.io
 APIS := npu/v1alpha1

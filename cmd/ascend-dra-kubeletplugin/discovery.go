@@ -6,9 +6,11 @@ import (
 	"os"
 
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
 
 	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/featuregates"
 )
 
 // fetchAICore attempts to retrieve the total number of AI Cores on the card.
@@ -27,6 +29,25 @@ func fetchMemory(hdm *AscendManager) (int, error) {
 		return int(memSize), nil
 	}
 	return 0, err
+}
+
+func fetchDeviceMemoryMiB(mgr *AscendManager, logicID int32) (int64, error) {
+	memInfo, err := mgr.GetDeviceMemoryInfo(logicID)
+	if err == nil && memInfo != nil && memInfo.MemorySize > 0 {
+		return int64(memInfo.MemorySize), nil
+	}
+
+	memGiB, fallbackErr := fetchMemory(mgr)
+	if fallbackErr != nil {
+		if err != nil {
+			return 0, err
+		}
+		return 0, fallbackErr
+	}
+	if memGiB <= 0 {
+		return 0, fmt.Errorf("invalid memory size %dGiB", memGiB)
+	}
+	return int64(memGiB) * 1024, nil
 }
 
 // getDeviceResources returns the maximum AI Core and memory for a device
@@ -75,10 +96,13 @@ func enumerateAllPossibleDevices() (AllocatableDevices, *VNPUManager, error) {
 		return nil, nil, err
 	}
 
-	vnpuManager, err := NewVNPUManager()
-	if err != nil {
-		log.Printf("Failed to initialize vNPU manager: %v. Only full-card allocation is supported.", err)
-		vnpuManager = nil
+	var vnpuManager *VNPUManager
+	if !featuregates.Enabled(featuregates.HAMivNPUCore) {
+		vnpuManager, err = NewVNPUManager()
+		if err != nil {
+			log.Printf("Failed to initialize vNPU manager: %v. Only full-card allocation is supported.", err)
+			vnpuManager = nil
+		}
 	}
 
 	alldevices, err := enumerateDevices(mgr, vnpuManager, os.Getenv("NODE_NAME"))
@@ -106,7 +130,10 @@ func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName str
 			DriverDomain + "type":  {StringValue: ptr.To("NPU")},
 		}
 
-		if vnpuManager != nil {
+		var capacities map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
+		if featuregates.Enabled(featuregates.HAMivNPUCore) {
+			capacities = buildLibvNPUDeviceCapacities(mgr, dev.LogicID)
+		} else if vnpuManager != nil {
 			vnpuManager.InitPhysicalNPU(deviceName, dev.LogicID, dev.DevType)
 			maxAICore, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
 			devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
@@ -116,9 +143,52 @@ func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName str
 		device := resourceapi.Device{
 			Name:       deviceName,
 			Attributes: devAttributes,
+			Capacity:   capacities,
+		}
+		if featuregates.Enabled(featuregates.HAMivNPUCore) {
+			device.AllowMultipleAllocations = ptr.To(true)
 		}
 		alldevices[device.Name] = device
 		log.Printf("Discovered NPU device: %s, Type: NPU, Model: %s", deviceName, dev.DevType)
 	}
 	return alldevices, nil
+}
+
+func buildLibvNPUDeviceCapacities(mgr *AscendManager, logicID int32) map[resourceapi.QualifiedName]resourceapi.DeviceCapacity {
+	memoryMiB, err := fetchDeviceMemoryMiB(mgr, logicID)
+	if err != nil {
+		log.Printf("Failed to fetch device memory for logic ID %d: %v; using 32Gi fallback", logicID, err)
+		memoryMiB = 32 * 1024
+	}
+
+	memValue := *resource.NewQuantity(memoryMiB*1024*1024, resource.BinarySI)
+	memStep := resource.MustParse("1Mi")
+	aicoreValue := *resource.NewQuantity(100, resource.DecimalSI)
+	aicoreMin := *resource.NewQuantity(0, resource.DecimalSI)
+	aicoreStep := *resource.NewQuantity(1, resource.DecimalSI)
+
+	return map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
+		DriverDomain + "memory": {
+			Value: memValue,
+			RequestPolicy: ptr.To(resourceapi.CapacityRequestPolicy{
+				Default: ptr.To(memValue),
+				ValidRange: ptr.To(resourceapi.CapacityRequestPolicyRange{
+					Min:  ptr.To(memStep),
+					Max:  ptr.To(memValue),
+					Step: ptr.To(memStep),
+				}),
+			}),
+		},
+		DriverDomain + "aicore": {
+			Value: aicoreValue,
+			RequestPolicy: ptr.To(resourceapi.CapacityRequestPolicy{
+				Default: ptr.To(aicoreValue),
+				ValidRange: ptr.To(resourceapi.CapacityRequestPolicyRange{
+					Min:  ptr.To(aicoreMin),
+					Max:  ptr.To(aicoreValue),
+					Step: ptr.To(aicoreStep),
+				}),
+			}),
+		},
+	}
 }

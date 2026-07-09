@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -23,6 +24,7 @@ import (
 	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 
 	configapi "github.com/Project-HAMi/hami-dra-driver/api/project-hami.io/resource/npu/v1alpha1"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/featuregates"
 	"github.com/Project-HAMi/hami-dra-driver/pkg/npuutil"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -264,8 +266,9 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 	for _, result := range claim.Status.Allocation.Devices.Results {
 		origDevice := result.Device
 
-		// If vnpuManager is available, try to allocate vNPU slices first
-		if s.vnpuManager != nil {
+		// In libvnpu mode, runtime sharing is handled by consumable capacity
+		// and CDI edits, so no physical vNPU slice is allocated.
+		if !featuregates.Enabled(featuregates.HAMivNPUCore) && s.vnpuManager != nil {
 			if err := s.allocateVNPUSlice(&result, configs, origDevice); err != nil {
 				log.Printf("Warning: failed to allocate vNPU slice: %v, attempting to use full card allocation", err)
 			}
@@ -375,7 +378,7 @@ func (s *DeviceState) allocateVNPUSlice(
 // unprepareDevices reclaims devices under the specified ClaimUID
 func (s *DeviceState) unprepareDevices(claimUID string, devices PreparedDevices) error {
 	log.Printf("Starting to release devices, claimUID: %s", claimUID)
-	if s.vnpuManager == nil {
+	if featuregates.Enabled(featuregates.HAMivNPUCore) || s.vnpuManager == nil {
 		return nil
 	}
 	for _, dev := range devices {
@@ -397,6 +400,10 @@ func (s *DeviceState) unprepareDevices(claimUID string, devices PreparedDevices)
 func (s *DeviceState) applyConfig(config *configapi.NpuConfig, results []*resourceapi.DeviceRequestAllocationResult) (PerDeviceCDIContainerEdits, error) {
 	perDeviceEdits := make(PerDeviceCDIContainerEdits)
 
+	if featuregates.Enabled(featuregates.HAMivNPUCore) {
+		return s.applyLibvNPUConfig(results)
+	}
+
 	for _, result := range results {
 		envs := buildBaseEnv(result.Device)
 		if s.vnpuManager != nil {
@@ -407,6 +414,162 @@ func (s *DeviceState) applyConfig(config *configapi.NpuConfig, results []*resour
 		perDeviceEdits[result.Device] = &cdiapi.ContainerEdits{ContainerEdits: edits}
 	}
 	return perDeviceEdits, nil
+}
+
+func (s *DeviceState) applyLibvNPUConfig(results []*resourceapi.DeviceRequestAllocationResult) (PerDeviceCDIContainerEdits, error) {
+	perDeviceEdits := make(PerDeviceCDIContainerEdits)
+	if len(results) == 0 {
+		return perDeviceEdits, nil
+	}
+	if err := validateAllocationResultForLibvNPU(results); err != nil {
+		return perDeviceEdits, err
+	}
+
+	allocatedDeviceIDs := make([]string, 0, len(results))
+	for _, result := range results {
+		deviceID, err := visibleDeviceID(result.Device)
+		if err != nil {
+			return perDeviceEdits, err
+		}
+		allocatedDeviceIDs = append(allocatedDeviceIDs, deviceID)
+	}
+
+	memoryBytes, err := s.libvNPUCapacityValue(
+		results[0],
+		resourceapi.QualifiedName(DriverDomain+"memory"),
+		resourceapi.QualifiedName("memory"),
+	)
+	if err != nil {
+		return perDeviceEdits, err
+	}
+	priority, err := s.libvNPUCapacityValue(
+		results[0],
+		resourceapi.QualifiedName(DriverDomain+"aicore"),
+		resourceapi.QualifiedName("aicore"),
+		resourceapi.QualifiedName("cores"),
+	)
+	if err != nil {
+		return perDeviceEdits, err
+	}
+
+	edits := &cdispec.ContainerEdits{
+		Env: []string{
+			fmt.Sprintf("ASCEND_VISIBLE_DEVICES=%s", strings.Join(allocatedDeviceIDs, ",")),
+		},
+	}
+	libvNPUEdits := buildLibvNPUCDIContainerEdits(memoryBytes, priority, allocatedDeviceIDs[0])
+	mergeContainerEdits(edits, libvNPUEdits)
+
+	sharedEdits := &cdiapi.ContainerEdits{ContainerEdits: edits}
+	for _, result := range results {
+		perDeviceEdits[result.Device] = sharedEdits
+	}
+	return perDeviceEdits, nil
+}
+
+func visibleDeviceID(deviceName string) (string, error) {
+	dn, err := npuutil.ParseDeviceName(deviceName)
+	if err != nil {
+		return "", fmt.Errorf("invalid NPU device name %q: %w", deviceName, err)
+	}
+	return dn.VisibleDevice(), nil
+}
+
+func (s *DeviceState) libvNPUCapacityValue(
+	result *resourceapi.DeviceRequestAllocationResult,
+	names ...resourceapi.QualifiedName,
+) (int64, error) {
+	if value, found, err := quantityValue(result.ConsumedCapacity, names...); found || err != nil {
+		return value, err
+	}
+	if device, ok := s.allocatable[result.Device]; ok {
+		capacity := make(map[resourceapi.QualifiedName]resource.Quantity, len(device.Capacity))
+		for name, value := range device.Capacity {
+			capacity[name] = value.Value
+		}
+		if value, found, err := quantityValue(capacity, names...); found || err != nil {
+			return value, err
+		}
+	}
+	return 0, fmt.Errorf("missing consumed capacity %v for device %s", names, result.Device)
+}
+
+func quantityValue(capacity map[resourceapi.QualifiedName]resource.Quantity, names ...resourceapi.QualifiedName) (int64, bool, error) {
+	for _, name := range names {
+		quantity, ok := capacity[name]
+		if !ok {
+			continue
+		}
+		value, ok := quantity.AsInt64()
+		if !ok {
+			return 0, true, fmt.Errorf("capacity %s=%s cannot be represented as int64", name, quantity.String())
+		}
+		return value, true, nil
+	}
+	return 0, false, nil
+}
+
+func validateAllocationResultForLibvNPU(results []*resourceapi.DeviceRequestAllocationResult) error {
+	capacityMap := map[resourceapi.QualifiedName]resource.Quantity{}
+	for _, result := range results {
+		for name, quantity := range result.ConsumedCapacity {
+			if capacity, exists := capacityMap[name]; exists {
+				if !quantity.Equal(capacity) {
+					return fmt.Errorf("invalid capacity %s for %s: capacities must be same across devices currently", name, result.Device)
+				}
+			} else {
+				capacityMap[name] = quantity
+			}
+		}
+	}
+	return nil
+}
+
+func buildLibvNPUCDIContainerEdits(memoryBytes, priority int64, deviceID string) *cdispec.ContainerEdits {
+	var mounts []*cdispec.Mount
+	driverPaths := []string{
+		"/usr/local/bin/npu-smi",
+		"/etc/ascend_install.info",
+		"/usr/local/Ascend/driver/lib64/driver",
+		"/usr/local/Ascend/driver/version.info",
+	}
+	for _, path := range driverPaths {
+		mounts = append(mounts, &cdispec.Mount{
+			HostPath:      path,
+			ContainerPath: path,
+			Options:       []string{"ro"},
+		})
+	}
+	mounts = append(mounts, &cdispec.Mount{
+		HostPath:      "/usr/local/hami-vnpu-core",
+		ContainerPath: "/hami-vnpu-core",
+		Options:       []string{"ro"},
+	})
+	mounts = append(mounts, &cdispec.Mount{
+		HostPath:      "/usr/local/hami-vnpu-core/ld.so.preload",
+		ContainerPath: "/etc/ld.so.preload",
+		Options:       []string{"ro"},
+	})
+	mounts = append(mounts, &cdispec.Mount{
+		HostPath:      "/usr/local/hami-shared-region",
+		ContainerPath: "/hami-shared-region",
+		Options:       []string{"rw", "nosuid", "nodev", "bind"},
+	})
+	return &cdispec.ContainerEdits{
+		Env: []string{
+			fmt.Sprintf("NPU_MEM_QUOTA=%d", memoryBytes/1024/1024),
+			fmt.Sprintf("NPU_PRIORITY=%d", priority),
+			fmt.Sprintf("NPU_GLOBAL_SHM_PATH=/hami-shared-region/%s_global_registry", deviceID),
+		},
+		Mounts: mounts,
+	}
+}
+
+func mergeContainerEdits(dst, src *cdispec.ContainerEdits) {
+	dst.Env = append(dst.Env, src.Env...)
+	dst.DeviceNodes = append(dst.DeviceNodes, src.DeviceNodes...)
+	dst.Hooks = append(dst.Hooks, src.Hooks...)
+	dst.Mounts = append(dst.Mounts, src.Mounts...)
 }
 
 // buildBaseEnv constructs basic environment variables such as ASCEND_VISIBLE_DEVICES

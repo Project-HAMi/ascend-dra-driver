@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/featuregates"
 )
 
 // NewVNPUManager creates and initializes a new VNPUManager.
@@ -261,14 +262,19 @@ func (m *VNPUManager) wholeCardIsAvailable(npu *PhysicalNPUState) bool {
 
 func (d *driver) getAvailableDeviceNames() []string {
 	var deviceNames []string
-	if d.state.vnpuManager != nil {
-		for _, physicalNpu := range d.state.vnpuManager.PhysicalNPUs {
-			for _, slice := range physicalNpu.AvailableSlices {
-				deviceNames = append(deviceNames, slice.SliceID)
-			}
-			for _, slice := range physicalNpu.AllocatedSlices {
-				deviceNames = append(deviceNames, slice.SliceID)
-			}
+	if featuregates.Enabled(featuregates.HAMivNPUCore) || d.state.vnpuManager == nil {
+		for name := range d.state.allocatable {
+			deviceNames = append(deviceNames, name)
+		}
+		return deviceNames
+	}
+
+	for _, physicalNpu := range d.state.vnpuManager.PhysicalNPUs {
+		for _, slice := range physicalNpu.AvailableSlices {
+			deviceNames = append(deviceNames, slice.SliceID)
+		}
+		for _, slice := range physicalNpu.AllocatedSlices {
+			deviceNames = append(deviceNames, slice.SliceID)
 		}
 	}
 

@@ -95,6 +95,10 @@ func (am *AscendManager) GetChipMem() (int32, error) {
 	return 0, fmt.Errorf("not get memory size")
 }
 
+func (am *AscendManager) GetDeviceMemoryInfo(logicID int32) (*npuCommon.MemoryInfo, error) {
+	return am.mgr.GetDeviceMemoryInfo(logicID)
+}
+
 // GetChipAICoreCount get chip aicore count
 func (am *AscendManager) GetChipAICoreCount() (int32, error) {
 	_, logicIDs, err := am.mgr.GetDeviceList()
