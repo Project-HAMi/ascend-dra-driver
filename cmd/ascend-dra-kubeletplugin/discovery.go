@@ -71,16 +71,33 @@ func getDeviceResources(mgr *AscendManager, devType string, vnpuManager *VNPUMan
 // and enumerates all possible devices to produce an AllocatableDevices map.
 func enumerateAllPossibleDevices() (AllocatableDevices, *VNPUManager, error) {
 	mgr, err := NewAscendManager()
-	allInfo, _ := mgr.NewHwDevManager()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	vnpuManager, err := NewVNPUManager()
 	if err != nil {
 		log.Printf("Failed to initialize vNPU manager: %v. Only full-card allocation is supported.", err)
+		vnpuManager = nil
+	}
+
+	alldevices, err := enumerateDevices(mgr, vnpuManager, os.Getenv("NODE_NAME"))
+	if err != nil {
+		return nil, nil, err
+	}
+	return alldevices, vnpuManager, nil
+}
+
+func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName string) (AllocatableDevices, error) {
+	allInfo, err := mgr.NewHwDevManager()
+	if err != nil {
+		return nil, err
 	}
 
 	alldevices := make(AllocatableDevices)
 	for _, dev := range allInfo.AllDevs {
 		deviceName := fmt.Sprintf("%s%d-0", consts.NPUPrefix, dev.LogicID)
-		uuidStr := fmt.Sprintf("%s-%d", os.Getenv("NODE_NAME"), dev.LogicID)
+		uuidStr := fmt.Sprintf("%s-%d", nodeName, dev.LogicID)
 
 		devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 			DriverDomain + "index": {IntValue: ptr.To(int64(dev.LogicID))},
@@ -103,5 +120,5 @@ func enumerateAllPossibleDevices() (AllocatableDevices, *VNPUManager, error) {
 		alldevices[device.Name] = device
 		log.Printf("Discovered NPU device: %s, Type: NPU, Model: %s", deviceName, dev.DevType)
 	}
-	return alldevices, vnpuManager, nil
+	return alldevices, nil
 }
