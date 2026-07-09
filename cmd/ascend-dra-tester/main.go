@@ -45,9 +45,9 @@ func main() {
 func newApp() *cli.App {
 	flags := &Flags{}
 	return &cli.App{
-		Name:        "ascend-dra-tester",
-		Usage:       "Standalone NPU discovery tester for the Ascend DRA driver.",
-		Description: "ascend-dra-tester re-implements the NPU device discovery path of ascend-dra-kubeletplugin and emits the discovered devices as a Kubernetes ResourceSlice for manual verification.",
+		Name:            "ascend-dra-tester",
+		Usage:           "Standalone NPU discovery tester for the Ascend DRA driver.",
+		Description:     "ascend-dra-tester re-implements the NPU device discovery path of ascend-dra-kubeletplugin and emits the discovered devices as a Kubernetes ResourceSlice for manual verification.",
 		HideHelpCommand: true,
 		ArgsUsage:       " ",
 		Flags: []cli.Flag{
@@ -85,6 +85,10 @@ func newApp() *cli.App {
 }
 
 func run(flags *Flags) error {
+	if err := initAscendCommonLogger(defaultAscendTesterLogFile); err != nil {
+		return fmt.Errorf("init ascend-common logger: %w", err)
+	}
+
 	result, err := DiscoverNPUDevices(flags.nodeName)
 	if err != nil {
 		return err
