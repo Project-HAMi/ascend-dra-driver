@@ -25,8 +25,8 @@ import (
 	"strconv"
 	"strings"
 
-	"huawei.com/npu-exporter/v5/devmanager"
-	npuCommon "huawei.com/npu-exporter/v5/devmanager/common"
+	"ascend-common/devmanager"
+	npuCommon "ascend-common/devmanager/common"
 
 	"github.com/Project-HAMi/hami-dra-driver/pkg/common"
 )
@@ -45,14 +45,14 @@ type Device struct {
 
 // AscendManager wraps the Huawei devmanager DCMI client.
 type AscendManager struct {
-	mgr  *devmanager.DeviceManager
+	mgr  devmanager.DeviceInterface
 	devs []*Device
 }
 
 // NewAscendManager initializes the DCMI device manager.
 // It uses the same AutoInit("") call as the kubelet plugin.
 func NewAscendManager() (*AscendManager, error) {
-	mgr, err := devmanager.AutoInit("")
+	mgr, err := devmanager.AutoInit("", 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize ascend device manager: %w", err)
 	}
