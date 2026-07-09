@@ -1,4 +1,5 @@
-# Copyright 2022 The Kubernetes Authors.
+#!/usr/bin/env bash
+# Copyright 2024 The HAMi Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,21 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-GOLANG_VERSION ?= 1.26.0
+set -euo pipefail
 
-DRIVER_NAME := ascend-dra-driver
-MODULE := .
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 
-VERSION  ?= v0.1.0
-vVERSION := v$(VERSION:v%=%)
+echo "Initializing git submodules..."
+git submodule update --init --recursive
 
-VENDOR := project-hami.io
-APIS := npu/v1alpha1
+MIND_CLUSTER_DIR="$ROOT/third_party/mind-cluster"
+if [ -d "$MIND_CLUSTER_DIR/.git" ]; then
+    echo "Configuring sparse checkout for mind-cluster (only ascend-common)..."
+    cd "$MIND_CLUSTER_DIR"
+    git sparse-checkout init --cone
+    git sparse-checkout set component/ascend-common
+    git checkout HEAD -- .
+fi
 
-PLURAL_EXCEPTIONS  = DeviceClassParameters:DeviceClassParameters
-PLURAL_EXCEPTIONS += NpuConfig:NpuConfig
-
-ifeq ($(IMAGE_NAME),)
-REGISTRY ?= registry.example.com
-IMAGE_NAME = $(REGISTRY)/$(DRIVER_NAME)
-endif
+echo "Submodules initialized."

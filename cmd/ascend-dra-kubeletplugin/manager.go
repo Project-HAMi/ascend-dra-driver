@@ -18,12 +18,13 @@ package main
 
 import (
 	"fmt"
-	"github.com/Project-HAMi/hami-dra-driver/pkg/common"
 	"strconv"
 	"strings"
 
-	"huawei.com/npu-exporter/v5/devmanager"
-	npuCommon "huawei.com/npu-exporter/v5/devmanager/common"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/common"
+
+	"ascend-common/devmanager"
+	npuCommon "ascend-common/devmanager/common"
 )
 
 type Device struct {
@@ -38,13 +39,13 @@ type Device struct {
 }
 
 type AscendManager struct {
-	mgr *devmanager.DeviceManager
+	mgr devmanager.DeviceInterface
 	//nodeName string
 	devs []*Device
 }
 
 func NewAscendManager() (*AscendManager, error) {
-	mgr, err := devmanager.AutoInit("")
+	mgr, err := devmanager.AutoInit("", 0)
 	if err != nil {
 		return nil, err
 	}

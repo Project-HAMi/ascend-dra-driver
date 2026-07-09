@@ -25,6 +25,10 @@ BUILDIMAGE ?= $(IMAGE_NAME)-build:$(BUILDIMAGE_TAG)
 CMDS := $(patsubst ./cmd/%/,%,$(sort $(dir $(wildcard ./cmd/*/))))
 CMD_TARGETS := $(patsubst %,cmd-%, $(CMDS))
 
+.PHONY: init-submodules
+init-submodules:
+	@./scripts/init-submodules.sh
+
 CHECK_TARGETS := assert-fmt vet lint ineffassign misspell
 MAKE_TARGETS := binaries build check vendor fmt test examples cmds coverage generate $(CHECK_TARGETS)
 
@@ -32,6 +36,12 @@ TARGETS := $(MAKE_TARGETS) $(CMD_TARGETS)
 
 DOCKER_TARGETS := $(patsubst %,docker-%, $(TARGETS))
 .PHONY: $(TARGETS) $(DOCKER_TARGETS)
+
+# Force CGO to use the dcmi header shipped with ascend-common, avoiding
+# conflicts with system-installed (often older) Ascend driver headers.
+DCMI_INCLUDE := $(CURDIR)/third_party/mind-cluster/component/ascend-common/devmanager/dcmi
+CGO_CFLAGS := -I$(DCMI_INCLUDE) $(CGO_CFLAGS)
+export CGO_CFLAGS
 
 GOOS ?= linux
 

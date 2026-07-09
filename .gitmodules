@@ -1,0 +1,5 @@
+[submodule "third_party/mind-cluster"]
+	path = third_party/mind-cluster
+	url = https://gitcode.com/Ascend/mind-cluster.git
+	branch = v26.0.1
+	sparseCheckout = true
