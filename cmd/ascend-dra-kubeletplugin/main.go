@@ -147,6 +147,10 @@ func newApp() *cli.App {
 func RunPlugin(ctx context.Context, config *Config) error {
 	logger := klog.FromContext(ctx)
 
+	if err := initAscendCommonLogger(defaultAscendKubeletPluginLogFile); err != nil {
+		return fmt.Errorf("init ascend-common logger: %w", err)
+	}
+
 	err := os.MkdirAll(config.DriverPluginPath(), 0750)
 	if err != nil {
 		return err
