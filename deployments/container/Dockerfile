@@ -29,7 +29,11 @@ ENV PATH="${CARGO_HOME}/bin:${PATH}"
 WORKDIR /build
 COPY hami-vnpu-core/ ./hami-vnpu-core/
 RUN if [ -f hami-vnpu-core/Cargo.toml ]; then \
-        cd hami-vnpu-core && cargo build --release; \
+        cd hami-vnpu-core && \
+        RUSTFLAGS="-L native=${ASCEND_TOOLKIT_HOME}/aarch64-linux/devlib \
+            -C link-arg=-Wl,-rpath-link,${ASCEND_TOOLKIT_HOME}/aarch64-linux/devlib \
+            -C link-arg=-Wl,--allow-shlib-undefined" \
+            cargo build --release; \
     else \
         echo "WARN: hami-vnpu-core submodule not present, skipping libvnpu build"; \
     fi

@@ -31,7 +31,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
+	"sigs.k8s.io/yaml"
+	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 	"github.com/Project-HAMi/hami-dra-driver/pkg/featuregates"
 )
 
@@ -77,6 +80,80 @@ func TestMockDRALibvNPULifecycle(t *testing.T) {
 	assert.False(t, claimSpecContains(t, cdiRoot, "uid-libvnpu"))
 	assertPreparedClaimMissing(t, driver.state, "uid-libvnpu")
 	assert.ElementsMatch(t, []string{"npu-0-0"}, publishedDeviceNames(t, publisher.lastPublished(t)))
+}
+
+func TestMockDRALibvNPUTwoDeviceLifecycle(t *testing.T) {
+	enableHAMivNPUCore(t)
+	driver, publisher, cdiRoot := newMockE2EDriver(t)
+
+	secondDevice := driver.state.allocatable["npu-0-0"]
+	secondDevice.Name = "npu-1-0"
+	driver.state.allocatable[secondDevice.Name] = secondDevice
+	driver.syncAllocatable()
+	assert.ElementsMatch(t, []string{"npu-0-0", "npu-1-0"}, publishedDeviceNames(t, publisher.lastPublished(t)))
+
+	claim := allocatedClaim("claim-libvnpu-two", "uid-libvnpu-two", "npu-0-0", nil)
+	claim.Status.Allocation.Devices.Results[0].ConsumedCapacity = libvNPUConsumedCapacity("1024Mi", 50)
+	claim.Status.Allocation.Devices.Results = append(claim.Status.Allocation.Devices.Results,
+		resourceapi.DeviceRequestAllocationResult{
+			Request:          "npu",
+			Driver:           consts.DriverName,
+			Pool:             mockE2ENodeName,
+			Device:           "npu-1-0",
+			ConsumedCapacity: libvNPUConsumedCapacity("1024Mi", 50),
+		})
+
+	prepared, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
+	require.NoError(t, err)
+	require.NoError(t, prepared[claim.UID].Err)
+	require.Len(t, prepared[claim.UID].Devices, 2)
+	assert.ElementsMatch(t, []string{"npu-0-0", "npu-1-0"}, []string{
+		prepared[claim.UID].Devices[0].DeviceName,
+		prepared[claim.UID].Devices[1].DeviceName,
+	})
+
+	spec := claimSpec(t, cdiRoot, "uid-libvnpu-two")
+	require.Len(t, spec.Devices, 1)
+	edits := spec.Devices[0].ContainerEdits
+	assert.ElementsMatch(t, []string{
+		"ASCEND_VISIBLE_DEVICES=0,1",
+		"NPU_MEM_QUOTA=1024",
+		"NPU_PRIORITY=50",
+		"NPU_GLOBAL_SHM_PATH=/hami-shared-region/0_global_registry",
+	}, edits.Env)
+
+	mountCounts := make(map[string]int)
+	for _, mount := range edits.Mounts {
+		mountCounts[mount.ContainerPath]++
+		assert.Contains(t, mount.Options, "bind", "mount %s must be a bind mount", mount.ContainerPath)
+	}
+	for _, path := range []string{
+		"/usr/local/bin/npu-smi",
+		"/etc/ascend_install.info",
+		"/usr/local/Ascend/driver/lib64/driver",
+		"/usr/local/Ascend/driver/version.info",
+		"/hami-vnpu-core",
+		"/etc/ld.so.preload",
+		"/hami-shared-region",
+	} {
+		assert.Equal(t, 1, mountCounts[path], "mount %s must be injected exactly once", path)
+	}
+
+	preparedAgain, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
+	require.NoError(t, err)
+	require.NoError(t, preparedAgain[claim.UID].Err)
+	assert.Equal(t, prepared[claim.UID].Devices, preparedAgain[claim.UID].Devices)
+
+	unprepared, err := driver.UnprepareResourceClaims(context.Background(), []kubeletplugin.NamespacedObject{
+		{
+			NamespacedName: types.NamespacedName{Namespace: "default", Name: "claim-libvnpu-two"},
+			UID:            claim.UID,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, unprepared[claim.UID])
+	assert.False(t, claimSpecContains(t, cdiRoot, "uid-libvnpu-two"))
+	assertPreparedClaimMissing(t, driver.state, "uid-libvnpu-two")
 }
 
 func TestLibvNPUApplyConfigRejectsMismatchedCapacity(t *testing.T) {
@@ -132,6 +209,13 @@ func claimSpecContent(t *testing.T, root, claimUID string) string {
 	require.NoError(t, err)
 	require.NotEmpty(t, matched)
 	return matched
+}
+
+func claimSpec(t *testing.T, root, claimUID string) cdispec.Spec {
+	t.Helper()
+	var spec cdispec.Spec
+	require.NoError(t, yaml.Unmarshal([]byte(claimSpecContent(t, root, claimUID)), &spec))
+	return spec
 }
 
 func publishedDevices(t *testing.T, resources resourceslice.DriverResources) []resourceapi.Device {

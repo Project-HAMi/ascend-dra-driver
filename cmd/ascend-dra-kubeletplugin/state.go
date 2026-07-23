@@ -461,8 +461,9 @@ func (s *DeviceState) applyLibvNPUConfig(results []*resourceapi.DeviceRequestAll
 	mergeContainerEdits(edits, libvNPUEdits)
 
 	sharedEdits := &cdiapi.ContainerEdits{ContainerEdits: edits}
-	for _, result := range results {
-		perDeviceEdits[result.Device] = sharedEdits
+	perDeviceEdits[results[0].Device] = sharedEdits
+	for _, result := range results[1:] {
+		perDeviceEdits[result.Device] = &cdiapi.ContainerEdits{ContainerEdits: &cdispec.ContainerEdits{}}
 	}
 	return perDeviceEdits, nil
 }
@@ -537,18 +538,18 @@ func buildLibvNPUCDIContainerEdits(memoryBytes, priority int64, deviceID string)
 		mounts = append(mounts, &cdispec.Mount{
 			HostPath:      path,
 			ContainerPath: path,
-			Options:       []string{"ro"},
+			Options:       []string{"ro", "bind"},
 		})
 	}
 	mounts = append(mounts, &cdispec.Mount{
 		HostPath:      "/usr/local/hami-vnpu-core",
 		ContainerPath: "/hami-vnpu-core",
-		Options:       []string{"ro"},
+		Options:       []string{"ro", "bind"},
 	})
 	mounts = append(mounts, &cdispec.Mount{
 		HostPath:      "/usr/local/hami-vnpu-core/ld.so.preload",
 		ContainerPath: "/etc/ld.so.preload",
-		Options:       []string{"ro"},
+		Options:       []string{"ro", "bind"},
 	})
 	mounts = append(mounts, &cdispec.Mount{
 		HostPath:      "/usr/local/hami-shared-region",
