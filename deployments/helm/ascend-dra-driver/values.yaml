@@ -47,6 +47,9 @@ controller:
 
 kubeletPlugin:
   priorityClassName: "system-node-critical"
+  # Optional host path for npu-smi when it is not available below the
+  # /usr/local/Ascend mount. HAMivNPUCore startup requires npu-smi.
+  npuSmiHostPath: ""
   updateStrategy:
     type: RollingUpdate
   podAnnotations: {}

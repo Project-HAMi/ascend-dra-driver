@@ -196,6 +196,7 @@ func newMockE2EDriver(t *testing.T) (*driver, *fakePluginHelper, string) {
 		allocatable:       allocatable,
 		checkpointManager: cpManager,
 		vnpuManager:       vnpuManager,
+		libvNPUHostPath:   filepath.Join(t.TempDir(), "hami-vnpu-core"),
 	}
 	vnpuManager.SetDeviceUpdateCallback(func(deviceName string, physicalNpu *PhysicalNPUState) {
 		state.UpdateAllocatableDevice(deviceName, physicalNpu)

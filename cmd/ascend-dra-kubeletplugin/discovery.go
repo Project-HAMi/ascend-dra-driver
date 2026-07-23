@@ -97,7 +97,15 @@ func enumerateAllPossibleDevices() (AllocatableDevices, *VNPUManager, error) {
 	}
 
 	var vnpuManager *VNPUManager
-	if !featuregates.Enabled(featuregates.HAMivNPUCore) {
+	if featuregates.Enabled(featuregates.HAMivNPUCore) {
+		runner, err := newNPUSmiDeviceShareRunner()
+		if err != nil {
+			return nil, nil, fmt.Errorf("initialize device-share: %w", err)
+		}
+		if err := enableHAMivNPUDeviceShare(mgr, runner); err != nil {
+			return nil, nil, fmt.Errorf("initialize device-share: %w", err)
+		}
+	} else {
 		vnpuManager, err = NewVNPUManager()
 		if err != nil {
 			log.Printf("Failed to initialize vNPU manager: %v. Only full-card allocation is supported.", err)

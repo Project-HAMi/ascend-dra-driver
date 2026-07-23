@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -31,12 +32,24 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
+	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
 	"sigs.k8s.io/yaml"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
 	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 	"github.com/Project-HAMi/hami-dra-driver/pkg/featuregates"
 )
+
+type failingCreateCheckpointManager struct {
+	checkpointmanager.CheckpointManager
+}
+
+func (m *failingCreateCheckpointManager) CreateCheckpoint(
+	_ string,
+	_ checkpointmanager.Checkpoint,
+) error {
+	return errors.New("injected checkpoint failure")
+}
 
 func TestMockDRALibvNPULifecycle(t *testing.T) {
 	enableHAMivNPUCore(t)
@@ -66,8 +79,11 @@ func TestMockDRALibvNPULifecycle(t *testing.T) {
 	assert.Contains(t, spec, "NPU_MEM_QUOTA=1024")
 	assert.Contains(t, spec, "NPU_PRIORITY=50")
 	assert.Contains(t, spec, "NPU_GLOBAL_SHM_PATH=/hami-shared-region/0_global_registry")
+	assert.Contains(t, spec, "NPU_LOCAL_SHM_PATH=/hami-vnpu-shmem/vnpu_local_shmem")
 	assert.Contains(t, spec, "/hami-vnpu-core")
 	assert.Contains(t, spec, "/etc/ld.so.preload")
+	localShmemDir := filepath.Join(driver.state.libvNPUHostPath, "containers", "uid-libvnpu")
+	require.DirExists(t, localShmemDir)
 
 	unprepared, err := driver.UnprepareResourceClaims(context.Background(), []kubeletplugin.NamespacedObject{
 		{
@@ -79,6 +95,7 @@ func TestMockDRALibvNPULifecycle(t *testing.T) {
 	require.NoError(t, unprepared[claim.UID])
 	assert.False(t, claimSpecContains(t, cdiRoot, "uid-libvnpu"))
 	assertPreparedClaimMissing(t, driver.state, "uid-libvnpu")
+	assert.NoDirExists(t, localShmemDir)
 	assert.ElementsMatch(t, []string{"npu-0-0"}, publishedDeviceNames(t, publisher.lastPublished(t)))
 }
 
@@ -120,24 +137,31 @@ func TestMockDRALibvNPUTwoDeviceLifecycle(t *testing.T) {
 		"NPU_MEM_QUOTA=1024",
 		"NPU_PRIORITY=50",
 		"NPU_GLOBAL_SHM_PATH=/hami-shared-region/0_global_registry",
+		"NPU_LOCAL_SHM_PATH=/hami-vnpu-shmem/vnpu_local_shmem",
 	}, edits.Env)
 
 	mountCounts := make(map[string]int)
+	mountHostPaths := make(map[string]string)
 	for _, mount := range edits.Mounts {
 		mountCounts[mount.ContainerPath]++
+		mountHostPaths[mount.ContainerPath] = mount.HostPath
 		assert.Contains(t, mount.Options, "bind", "mount %s must be a bind mount", mount.ContainerPath)
 	}
 	for _, path := range []string{
-		"/usr/local/bin/npu-smi",
 		"/etc/ascend_install.info",
 		"/usr/local/Ascend/driver/lib64/driver",
 		"/usr/local/Ascend/driver/version.info",
 		"/hami-vnpu-core",
 		"/etc/ld.so.preload",
 		"/hami-shared-region",
+		"/hami-vnpu-shmem",
 	} {
 		assert.Equal(t, 1, mountCounts[path], "mount %s must be injected exactly once", path)
 	}
+	assert.Zero(t, mountCounts["/usr/local/bin/npu-smi"], "npu-smi is a plugin startup dependency")
+	localShmemDir := filepath.Join(driver.state.libvNPUHostPath, "containers", "uid-libvnpu-two")
+	assert.Equal(t, localShmemDir, mountHostPaths["/hami-vnpu-shmem"])
+	require.DirExists(t, localShmemDir)
 
 	preparedAgain, err := driver.PrepareResourceClaims(context.Background(), []*resourceapi.ResourceClaim{claim})
 	require.NoError(t, err)
@@ -154,6 +178,7 @@ func TestMockDRALibvNPUTwoDeviceLifecycle(t *testing.T) {
 	require.NoError(t, unprepared[claim.UID])
 	assert.False(t, claimSpecContains(t, cdiRoot, "uid-libvnpu-two"))
 	assertPreparedClaimMissing(t, driver.state, "uid-libvnpu-two")
+	assert.NoDirExists(t, localShmemDir)
 }
 
 func TestLibvNPUApplyConfigRejectsMismatchedCapacity(t *testing.T) {
@@ -172,8 +197,48 @@ func TestLibvNPUApplyConfigRejectsMismatchedCapacity(t *testing.T) {
 		},
 	}
 
-	_, err := state.applyLibvNPUConfig(results)
+	_, err := state.applyLibvNPUConfig(results, t.TempDir())
 	require.ErrorContains(t, err, "capacities must be same across devices")
+}
+
+func TestLibvNPUClaimLocalShmemPathRejectsUnsafeUID(t *testing.T) {
+	state := &DeviceState{libvNPUHostPath: t.TempDir()}
+
+	_, err := state.libvNPUClaimLocalShmemDir("../other-claim")
+
+	require.ErrorContains(t, err, "invalid claim UID")
+}
+
+func TestLibvNPUPrepareRollsBackCDIAndLocalShmemWhenCheckpointFails(t *testing.T) {
+	enableHAMivNPUCore(t)
+	driver, _, cdiRoot := newMockE2EDriver(t)
+	claim := allocatedClaim("claim-libvnpu-failure", "uid-libvnpu-failure", "npu-0-0", nil)
+	claim.Status.Allocation.Devices.Results[0].ConsumedCapacity = libvNPUConsumedCapacity("1024Mi", 50)
+	driver.state.checkpointManager = &failingCreateCheckpointManager{
+		CheckpointManager: driver.state.checkpointManager,
+	}
+
+	_, err := driver.state.Prepare(claim)
+
+	require.ErrorContains(t, err, "injected checkpoint failure")
+	assert.False(t, claimSpecContains(t, cdiRoot, string(claim.UID)))
+	assert.NoDirExists(t, filepath.Join(
+		driver.state.libvNPUHostPath,
+		"containers",
+		string(claim.UID),
+	))
+}
+
+func TestDefaultModeUnprepareDoesNotRemoveLibvNPUClaimDirectory(t *testing.T) {
+	require.NoError(t, featuregates.FeatureGates().Set("HAMivNPUCore=false"))
+	driver, _, _ := newMockE2EDriver(t)
+	claimUID := "uid-default-mode"
+	localShmemDir, err := driver.state.ensureLibvNPUClaimLocalShmemDir(claimUID)
+	require.NoError(t, err)
+
+	require.NoError(t, driver.state.Unprepare(claimUID))
+
+	assert.DirExists(t, localShmemDir)
 }
 
 func enableHAMivNPUCore(t *testing.T) {

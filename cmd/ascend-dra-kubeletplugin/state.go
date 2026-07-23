@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,12 @@ type (
 	PreparedDevices            []*PreparedDevice
 	PreparedClaims             map[string]PreparedDevices
 	PerDeviceCDIContainerEdits map[string]*cdiapi.ContainerEdits
+)
+
+const (
+	defaultLibvNPUHostPath         = "/usr/local/hami-vnpu-core"
+	libvNPULocalShmemContainerPath = "/hami-vnpu-shmem"
+	libvNPULocalShmemFileName      = "vnpu_local_shmem"
 )
 
 type OpaqueDeviceConfig struct {
@@ -106,6 +113,7 @@ type DeviceState struct {
 	allocatable       AllocatableDevices
 	checkpointManager checkpointmanager.CheckpointManager
 	vnpuManager       *VNPUManager
+	libvNPUHostPath   string
 }
 
 func NewDeviceState(config *Config) (*DeviceState, error) {
@@ -134,6 +142,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 		allocatable:       allocatable,
 		checkpointManager: checkpointManager,
 		vnpuManager:       vnpuManager,
+		libvNPUHostPath:   defaultLibvNPUHostPath,
 	}
 
 	if vnpuManager != nil {
@@ -187,22 +196,61 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 	preparedClaims := checkpoint.V1.PreparedClaims
 
 	if preparedClaims[claimUID] != nil {
+		if featuregates.Enabled(featuregates.HAMivNPUCore) {
+			if _, err := s.ensureLibvNPUClaimLocalShmemDir(claimUID); err != nil {
+				return nil, err
+			}
+		}
 		return preparedClaims[claimUID].GetDevices(), nil
 	}
 
-	preparedDevices, err := s.prepareDevices(claim)
+	localShmemDir := ""
+	keepLocalShmemDir := false
+	if featuregates.Enabled(featuregates.HAMivNPUCore) {
+		claimLocalShmemDir, ensureErr := s.ensureLibvNPUClaimLocalShmemDir(claimUID)
+		if ensureErr != nil {
+			return nil, ensureErr
+		}
+		localShmemDir = claimLocalShmemDir
+		defer func() {
+			if !keepLocalShmemDir {
+				_ = s.removeLibvNPUClaimLocalShmemDir(claimUID)
+			}
+		}()
+	}
+
+	preparedDevices, err := s.prepareDevices(claim, localShmemDir)
 	if err != nil {
 		return nil, fmt.Errorf("prepare failed: %v", err)
 	}
 
 	if err = s.cdi.CreateClaimSpecFile(claimUID, preparedDevices); err != nil {
+		if rollbackErr := s.unprepareDevices(claimUID, preparedDevices); rollbackErr != nil {
+			return nil, fmt.Errorf(
+				"unable to create CDI spec file for claim: %v; unable to roll back prepared devices: %v",
+				err,
+				rollbackErr,
+			)
+		}
 		return nil, fmt.Errorf("unable to create CDI spec file for claim: %v", err)
 	}
 
 	preparedClaims[claimUID] = preparedDevices
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
+		delete(preparedClaims, claimUID)
+		cdiErr := s.cdi.DeleteClaimSpecFile(claimUID)
+		unprepareErr := s.unprepareDevices(claimUID, preparedDevices)
+		if cdiErr != nil || unprepareErr != nil {
+			return nil, fmt.Errorf(
+				"unable to sync to checkpoint: %v; rollback CDI: %v; rollback devices: %v",
+				err,
+				cdiErr,
+				unprepareErr,
+			)
+		}
 		return nil, fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
+	keepLocalShmemDir = true
 
 	return preparedClaims[claimUID].GetDevices(), nil
 }
@@ -217,6 +265,9 @@ func (s *DeviceState) Unprepare(claimUID string) error {
 	}
 	preparedClaims := checkpoint.V1.PreparedClaims
 	if preparedClaims[claimUID] == nil {
+		if featuregates.Enabled(featuregates.HAMivNPUCore) {
+			return s.removeLibvNPUClaimLocalShmemDir(claimUID)
+		}
 		return nil
 	}
 
@@ -234,10 +285,13 @@ func (s *DeviceState) Unprepare(claimUID string) error {
 		return fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
 
+	if featuregates.Enabled(featuregates.HAMivNPUCore) {
+		return s.removeLibvNPUClaimLocalShmemDir(claimUID)
+	}
 	return nil
 }
 
-func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (PreparedDevices, error) {
+func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim, localShmemDir string) (PreparedDevices, error) {
 	if claim.Status.Allocation == nil {
 		return nil, fmt.Errorf("claim not yet allocated")
 	}
@@ -311,7 +365,7 @@ func (s *DeviceState) prepareDevices(claim *resourceapi.ResourceClaim) (Prepared
 		}
 
 		// Apply the config to the list of results associated with it.
-		containerEdits, err := s.applyConfig(config, results)
+		containerEdits, err := s.applyConfig(config, results, localShmemDir)
 		if err != nil {
 			return nil, fmt.Errorf("error applying GPU config: %w", err)
 		}
@@ -397,11 +451,15 @@ func (s *DeviceState) unprepareDevices(claimUID string, devices PreparedDevices)
 // describe the selected sharing strategy and, for vNPU slices, the slice
 // specification. The Ascend runtime performs the actual hardware-level
 // configuration based on these values and the allocated device.
-func (s *DeviceState) applyConfig(config *configapi.NpuConfig, results []*resourceapi.DeviceRequestAllocationResult) (PerDeviceCDIContainerEdits, error) {
+func (s *DeviceState) applyConfig(
+	config *configapi.NpuConfig,
+	results []*resourceapi.DeviceRequestAllocationResult,
+	localShmemDir string,
+) (PerDeviceCDIContainerEdits, error) {
 	perDeviceEdits := make(PerDeviceCDIContainerEdits)
 
 	if featuregates.Enabled(featuregates.HAMivNPUCore) {
-		return s.applyLibvNPUConfig(results)
+		return s.applyLibvNPUConfig(results, localShmemDir)
 	}
 
 	for _, result := range results {
@@ -416,7 +474,10 @@ func (s *DeviceState) applyConfig(config *configapi.NpuConfig, results []*resour
 	return perDeviceEdits, nil
 }
 
-func (s *DeviceState) applyLibvNPUConfig(results []*resourceapi.DeviceRequestAllocationResult) (PerDeviceCDIContainerEdits, error) {
+func (s *DeviceState) applyLibvNPUConfig(
+	results []*resourceapi.DeviceRequestAllocationResult,
+	localShmemDir string,
+) (PerDeviceCDIContainerEdits, error) {
 	perDeviceEdits := make(PerDeviceCDIContainerEdits)
 	if len(results) == 0 {
 		return perDeviceEdits, nil
@@ -457,7 +518,15 @@ func (s *DeviceState) applyLibvNPUConfig(results []*resourceapi.DeviceRequestAll
 			fmt.Sprintf("ASCEND_VISIBLE_DEVICES=%s", strings.Join(allocatedDeviceIDs, ",")),
 		},
 	}
-	libvNPUEdits := buildLibvNPUCDIContainerEdits(memoryBytes, priority, allocatedDeviceIDs[0])
+	libvNPUEdits, err := buildLibvNPUCDIContainerEdits(
+		memoryBytes,
+		priority,
+		allocatedDeviceIDs[0],
+		localShmemDir,
+	)
+	if err != nil {
+		return perDeviceEdits, err
+	}
 	mergeContainerEdits(edits, libvNPUEdits)
 
 	sharedEdits := &cdiapi.ContainerEdits{ContainerEdits: edits}
@@ -526,10 +595,15 @@ func validateAllocationResultForLibvNPU(results []*resourceapi.DeviceRequestAllo
 	return nil
 }
 
-func buildLibvNPUCDIContainerEdits(memoryBytes, priority int64, deviceID string) *cdispec.ContainerEdits {
+func buildLibvNPUCDIContainerEdits(
+	memoryBytes, priority int64,
+	deviceID, localShmemDir string,
+) (*cdispec.ContainerEdits, error) {
+	if localShmemDir == "" {
+		return nil, fmt.Errorf("local vNPU shared-memory directory is empty")
+	}
 	var mounts []*cdispec.Mount
 	driverPaths := []string{
-		"/usr/local/bin/npu-smi",
 		"/etc/ascend_install.info",
 		"/usr/local/Ascend/driver/lib64/driver",
 		"/usr/local/Ascend/driver/version.info",
@@ -556,14 +630,64 @@ func buildLibvNPUCDIContainerEdits(memoryBytes, priority int64, deviceID string)
 		ContainerPath: "/hami-shared-region",
 		Options:       []string{"rw", "nosuid", "nodev", "bind"},
 	})
+	mounts = append(mounts, &cdispec.Mount{
+		HostPath:      localShmemDir,
+		ContainerPath: libvNPULocalShmemContainerPath,
+		Options:       []string{"rw", "nosuid", "nodev", "bind"},
+	})
 	return &cdispec.ContainerEdits{
 		Env: []string{
 			fmt.Sprintf("NPU_MEM_QUOTA=%d", memoryBytes/1024/1024),
 			fmt.Sprintf("NPU_PRIORITY=%d", priority),
 			fmt.Sprintf("NPU_GLOBAL_SHM_PATH=/hami-shared-region/%s_global_registry", deviceID),
+			fmt.Sprintf(
+				"NPU_LOCAL_SHM_PATH=%s/%s",
+				libvNPULocalShmemContainerPath,
+				libvNPULocalShmemFileName,
+			),
 		},
 		Mounts: mounts,
+	}, nil
+}
+
+func (s *DeviceState) libvNPUClaimLocalShmemDir(claimUID string) (string, error) {
+	if claimUID == "" ||
+		claimUID == "." ||
+		claimUID == ".." ||
+		filepath.Base(claimUID) != claimUID ||
+		strings.ContainsAny(claimUID, `/\`) {
+		return "", fmt.Errorf("invalid claim UID %q", claimUID)
 	}
+	basePath := s.libvNPUHostPath
+	if basePath == "" {
+		basePath = defaultLibvNPUHostPath
+	}
+	return filepath.Join(basePath, "containers", claimUID), nil
+}
+
+func (s *DeviceState) ensureLibvNPUClaimLocalShmemDir(claimUID string) (string, error) {
+	path, err := s.libvNPUClaimLocalShmemDir(claimUID)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(path, 0o777); err != nil {
+		return "", fmt.Errorf("create local vNPU shared-memory directory %q: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o777); err != nil {
+		return "", fmt.Errorf("set permissions on local vNPU shared-memory directory %q: %w", path, err)
+	}
+	return path, nil
+}
+
+func (s *DeviceState) removeLibvNPUClaimLocalShmemDir(claimUID string) error {
+	path, err := s.libvNPUClaimLocalShmemDir(claimUID)
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove local vNPU shared-memory directory %q: %w", path, err)
+	}
+	return nil
 }
 
 func mergeContainerEdits(dst, src *cdispec.ContainerEdits) {

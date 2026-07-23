@@ -36,6 +36,7 @@ type stubDeviceManager struct {
 	deviceList       []int32
 	virtualDeviceMap map[int32]npuCommon.VirtualDevInfo
 	physicIDMap      map[int32]int32
+	cardDeviceIDMap  map[int32][2]int32
 	chipMap          map[int32]*npuCommon.ChipInfo
 }
 
@@ -51,6 +52,9 @@ func (s *stubDeviceManager) GetPhysicIDFromLogicID(logicID int32) (int32, error)
 }
 
 func (s *stubDeviceManager) GetCardIDDeviceID(logicID int32) (int32, int32, error) {
+	if ids, ok := s.cardDeviceIDMap[logicID]; ok {
+		return ids[0], ids[1], nil
+	}
 	return 0, 0, nil
 }
 
