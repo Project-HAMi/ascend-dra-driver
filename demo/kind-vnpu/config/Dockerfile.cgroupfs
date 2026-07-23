@@ -1,0 +1,15 @@
+ARG KIND_NODE_IMAGE=kindest/node:v1.34.0
+FROM ${KIND_NODE_IMAGE}
+
+RUN set -eux; \
+    config=/etc/containerd/config.toml; \
+    sed -i \
+      -e 's/enable_cdi = false/enable_cdi = true/g' \
+      -e 's/SystemdCgroup = true/SystemdCgroup = false/g' \
+      "$config"; \
+    if ! grep -Eq '^[[:space:]]*enable_cdi = true$' "$config"; then \
+      sed -i '/\[plugins\."io\.containerd\.grpc\.v1\.cri"\]/a\    enable_cdi = true' "$config"; \
+    fi; \
+    grep -Eq '^[[:space:]]*enable_cdi = true$' "$config"; \
+    ! grep -q 'SystemdCgroup = true' "$config"; \
+    grep -n -E 'enable_cdi|SystemdCgroup' "$config"

@@ -1,0 +1,20 @@
+ARG BASE_KIND_NODE_IMAGE=kindest/node:v1.34.0-cgroupfs-cdi
+FROM ${BASE_KIND_NODE_IMAGE}
+
+COPY ascend-docker-runtime-wrapper /usr/local/bin/ascend-docker-runtime-wrapper
+
+RUN set -eux; \
+    chmod 0755 /usr/local/bin/ascend-docker-runtime-wrapper; \
+    config=/etc/containerd/config.toml; \
+    if ! grep -q 'containerd.runtimes.ascend' "$config"; then \
+      printf '%s\n' \
+        '' \
+        '[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.ascend]' \
+        '  runtime_type = "io.containerd.runc.v2"' \
+        '  base_runtime_spec = "/etc/containerd/cri-base.json"' \
+        '[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.ascend.options]' \
+        '  BinaryName = "/usr/local/bin/ascend-docker-runtime-wrapper"' \
+        '  SystemdCgroup = false' \
+        >> "$config"; \
+    fi; \
+    grep -n -A7 'containerd.runtimes.ascend' "$config"
