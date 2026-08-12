@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"Ascend-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 
 	cdiapi "tags.cncf.io/container-device-interface/pkg/cdi"
 	cdiparser "tags.cncf.io/container-device-interface/pkg/parser"
@@ -85,6 +85,12 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, devices PreparedDevi
 			},
 		},
 	}
+
+	minVersion, err := cdiapi.MinimumRequiredVersion(spec)
+	if err != nil {
+		return fmt.Errorf("failed to get minimum required CDI spec version: %v", err)
+	}
+	spec.Version = minVersion
 
 	return cdi.cache.WriteSpec(spec, specName)
 }

@@ -31,19 +31,21 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 
-	"Ascend-dra-driver/pkg/consts"
-	"Ascend-dra-driver/pkg/flags"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/flags"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/version"
 )
 
 const (
-	DriverDomainName           = "npu.example.com"
-	DriverDomain               = "npu.example.com/"
+	DriverDomainName           = "npu.project-hami.io"
+	DriverDomain               = "npu.project-hami.io/"
 	DriverPluginCheckpointFile = "checkpoint.json"
 )
 
 type Flags struct {
-	kubeClientConfig flags.KubeClientConfig
-	loggingConfig    *flags.LoggingConfig
+	kubeClientConfig  flags.KubeClientConfig
+	loggingConfig     *flags.LoggingConfig
+	featureGateConfig *flags.FeatureGateConfig
 
 	nodeName                      string
 	cdiRoot                       string
@@ -70,8 +72,14 @@ func main() {
 }
 
 func newApp() *cli.App {
+	cli.VersionFlag = &cli.BoolFlag{
+		Name:               "version",
+		Usage:              "print the version",
+		DisableDefaultText: true,
+	}
 	flags := &Flags{
-		loggingConfig: flags.NewLoggingConfig(),
+		loggingConfig:     flags.NewLoggingConfig(),
+		featureGateConfig: flags.NewFeatureGateConfig(),
 	}
 	cliFlags := []cli.Flag{
 		&cli.StringFlag{
@@ -111,6 +119,7 @@ func newApp() *cli.App {
 		},
 	}
 	cliFlags = append(cliFlags, flags.kubeClientConfig.Flags()...)
+	cliFlags = append(cliFlags, flags.featureGateConfig.Flags()...)
 	cliFlags = append(cliFlags, flags.loggingConfig.Flags()...)
 
 	app := &cli.App{
@@ -118,6 +127,7 @@ func newApp() *cli.App {
 		Usage:           "ascend-dra-kubeletplugin implements a DRA driver plugin for Ascend NPU.",
 		ArgsUsage:       " ",
 		HideHelpCommand: true,
+		Version:         version.Get().Version,
 		Flags:           cliFlags,
 		Before: func(c *cli.Context) error {
 			if c.Args().Len() > 0 {
@@ -146,6 +156,10 @@ func newApp() *cli.App {
 
 func RunPlugin(ctx context.Context, config *Config) error {
 	logger := klog.FromContext(ctx)
+
+	if err := initAscendCommonLogger(defaultAscendKubeletPluginLogFile); err != nil {
+		return fmt.Errorf("init ascend-common logger: %w", err)
+	}
 
 	err := os.MkdirAll(config.DriverPluginPath(), 0750)
 	if err != nil {

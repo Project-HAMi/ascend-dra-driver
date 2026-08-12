@@ -8,30 +8,33 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/featuregates"
 )
 
-// NewVnpuManager creates and initializes a new VnpuManager.
-func NewVnpuManager() (*VnpuManager, error) {
-	templates, err := GetNpuTemplateInfo()
+// NewVNPUManager creates and initializes a new VNPUManager.
+func NewVNPUManager() (*VNPUManager, error) {
+	templates, err := GetVNPUTemplateInfo()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get NPU template info: %v", err)
 	}
-	return &VnpuManager{
-		PhysicalNpus: make(map[string]*PhysicalNpuState),
+	return &VNPUManager{
+		PhysicalNPUs: make(map[string]*PhysicalNPUState),
 		Templates:    templates,
 	}, nil
 }
 
-// GetNpuTemplateInfo attempts to read the NPU template information from a file.
+// GetVNPUTemplateInfo attempts to read the NPU template information from a file.
 // If the file is not found, it falls back to default templates.
-func GetNpuTemplateInfo() (map[string]*VnpuTemplate, error) {
-	filePath := "/etc/npu/template-info.txt"
+func GetVNPUTemplateInfo() (map[string]*VNPUTemplate, error) {
+	filePath := consts.TemplateInfoPath
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		log.Printf("Failed to read template file: %v. Using default templates.", err)
 		return createDefaultTemplates(), nil
 	}
-	templates := make(map[string]*VnpuTemplate)
+	templates := make(map[string]*VNPUTemplate)
 	if err := parseTemplateInfo(string(content), templates); err != nil {
 		return nil, err
 	}
@@ -40,18 +43,18 @@ func GetNpuTemplateInfo() (map[string]*VnpuTemplate, error) {
 }
 
 // createDefaultTemplates generates a set of default templates.
-func createDefaultTemplates() map[string]*VnpuTemplate {
-	templates := map[string]*VnpuTemplate{
-		"vir01": {Name: "vir01", Attributes: VnpuTemplateAttribute{AICORE: 4, Memory: 8}},
-		"vir02": {Name: "vir02", Attributes: VnpuTemplateAttribute{AICORE: 8, Memory: 12}},
-		"vir04": {Name: "vir04", Attributes: VnpuTemplateAttribute{AICORE: 16, Memory: 16}},
+func createDefaultTemplates() map[string]*VNPUTemplate {
+	templates := map[string]*VNPUTemplate{
+		"vir01": {Name: "vir01", Attributes: VNPUTemplateAttribute{AICORE: 4, Memory: 8}},
+		"vir02": {Name: "vir02", Attributes: VNPUTemplateAttribute{AICORE: 8, Memory: 12}},
+		"vir04": {Name: "vir04", Attributes: VNPUTemplateAttribute{AICORE: 16, Memory: 16}},
 	}
 	log.Printf("Using default templates. Total: %d", len(templates))
 	return templates
 }
 
 // parseTemplateInfo parses the template info string and populates the templates map.
-func parseTemplateInfo(output string, templates map[string]*VnpuTemplate) error {
+func parseTemplateInfo(output string, templates map[string]*VNPUTemplate) error {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 
 	var headerLine string
@@ -87,7 +90,7 @@ func parseTemplateInfo(output string, templates map[string]*VnpuTemplate) error 
 
 	var (
 		currentTemplate string
-		currentAttrs    *VnpuTemplateAttribute
+		currentAttrs    *VNPUTemplateAttribute
 	)
 	for scanner.Scan() {
 		line := strings.TrimSpace(strings.Trim(scanner.Text(), "|"))
@@ -97,7 +100,7 @@ func parseTemplateInfo(output string, templates map[string]*VnpuTemplate) error 
 		fields := regexp.MustCompile(`\s+`).Split(line, -1)
 		if len(fields) > 0 && strings.HasPrefix(fields[0], "vir") {
 			currentTemplate = fields[0]
-			currentAttrs = &VnpuTemplateAttribute{}
+			currentAttrs = &VNPUTemplateAttribute{}
 			for attr, pos := range columnPositions {
 				if attr == "Name" || pos >= len(fields) {
 					continue
@@ -118,7 +121,7 @@ func parseTemplateInfo(output string, templates map[string]*VnpuTemplate) error 
 					currentAttrs.Memory = val
 				}
 			}
-			templates[currentTemplate] = &VnpuTemplate{
+			templates[currentTemplate] = &VNPUTemplate{
 				Name:       currentTemplate,
 				Attributes: *currentAttrs,
 			}
@@ -127,42 +130,42 @@ func parseTemplateInfo(output string, templates map[string]*VnpuTemplate) error 
 	return nil
 }
 
-// InitPhysicalNpu initializes a physical NPU, using the entire card as a default available slice.
-func (m *VnpuManager) InitPhysicalNpu(deviceName string, logicID int32, modelName string) {
+// InitPhysicalNPU initializes a physical NPU, using the entire card as a default available slice.
+func (m *VNPUManager) InitPhysicalNPU(deviceName string, logicID int32, modelName string) {
 	m.Lock()
 	defer m.Unlock()
 
-	if _, exists := m.PhysicalNpus[deviceName]; exists {
+	if _, exists := m.PhysicalNPUs[deviceName]; exists {
 		log.Printf("Physical NPU %s already exists, skipping initialization.", deviceName)
 		return
 	}
 
-	physicalDeviceID := fmt.Sprintf("npu-%d", logicID)
+	physicalDeviceID := fmt.Sprintf("%s%d", consts.NPUPrefix, logicID)
 
-	npu := &PhysicalNpuState{
+	npu := &PhysicalNPUState{
 		DeviceName:       deviceName,
 		PhysicalDeviceID: physicalDeviceID,
 		LogicID:          logicID,
 		ModelName:        modelName,
-		AvailableSlices:  []*VnpuSlice{},
-		AllocatedSlices:  []*VnpuSlice{},
+		AvailableSlices:  []*VNPUSlice{},
+		AllocatedSlices:  []*VNPUSlice{},
 		SupportTemplates: cloneTemplates(m.Templates),
 		NextSliceIndex:   1,
 	}
 
-	npu.AvailableSlices = append(npu.AvailableSlices, &VnpuSlice{
+	npu.AvailableSlices = append(npu.AvailableSlices, &VNPUSlice{
 		SliceID:      deviceName,
 		TemplateName: "",
 		Allocated:    false,
 		Type:         "NPU",
 	})
-	m.PhysicalNpus[deviceName] = npu
+	m.PhysicalNPUs[deviceName] = npu
 
 	log.Printf("Physical NPU %s has been initialized.", deviceName)
 }
 
 // ReleaseSlice releases the specified VNPU slice.
-func (m *VnpuManager) ReleaseSlice(sliceID string) error {
+func (m *VNPUManager) ReleaseSlice(sliceID string) error {
 	m.Lock()
 	defer m.Unlock()
 
@@ -175,10 +178,10 @@ func (m *VnpuManager) ReleaseSlice(sliceID string) error {
 	slice.Allocated = false
 
 	if slice.Type == "NPU" {
-		pnpu.AllocatedSlices = []*VnpuSlice{}
-		pnpu.AvailableSlices = []*VnpuSlice{}
+		pnpu.AllocatedSlices = []*VNPUSlice{}
+		pnpu.AvailableSlices = []*VNPUSlice{}
 		pnpu.NextSliceIndex = 1
-		pnpu.AvailableSlices = append(pnpu.AvailableSlices, &VnpuSlice{
+		pnpu.AvailableSlices = append(pnpu.AvailableSlices, &VNPUSlice{
 			SliceID:      pnpu.DeviceName,
 			TemplateName: "",
 			Allocated:    false,
@@ -189,9 +192,9 @@ func (m *VnpuManager) ReleaseSlice(sliceID string) error {
 	}
 
 	if len(pnpu.AllocatedSlices) == 0 {
-		pnpu.AvailableSlices = []*VnpuSlice{}
+		pnpu.AvailableSlices = []*VNPUSlice{}
 		pnpu.NextSliceIndex = 1
-		pnpu.AvailableSlices = append(pnpu.AvailableSlices, &VnpuSlice{
+		pnpu.AvailableSlices = append(pnpu.AvailableSlices, &VNPUSlice{
 			SliceID:      pnpu.DeviceName,
 			TemplateName: "",
 			Allocated:    false,
@@ -199,9 +202,9 @@ func (m *VnpuManager) ReleaseSlice(sliceID string) error {
 		})
 		log.Printf("All vNPU slices released for device %s, restored to full card state", pnpu.DeviceName)
 	} else {
-		pnpu.AvailableSlices = []*VnpuSlice{}
-		newSliceID := fmt.Sprintf("npu-%d-%d", pnpu.LogicID, pnpu.NextSliceIndex)
-		newSlice := &VnpuSlice{
+		pnpu.AvailableSlices = []*VNPUSlice{}
+		newSliceID := fmt.Sprintf("%s%d-%d", consts.NPUPrefix, pnpu.LogicID, pnpu.NextSliceIndex)
+		newSlice := &VNPUSlice{
 			SliceID:      newSliceID,
 			TemplateName: "",
 			Allocated:    false,
@@ -220,8 +223,8 @@ func (m *VnpuManager) ReleaseSlice(sliceID string) error {
 	return nil
 }
 
-// GetVnpuSpecsEnv returns the ASCEND_VNPU_SPECS environment variable for a given slice.
-func (m *VnpuManager) GetVnpuSpecsEnv(sliceID string) (string, error) {
+// GetVNPUSpecsEnv returns the ASCEND_VNPU_SPECS environment variable for a given slice.
+func (m *VNPUManager) GetVNPUSpecsEnv(sliceID string) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -236,8 +239,8 @@ func (m *VnpuManager) GetVnpuSpecsEnv(sliceID string) (string, error) {
 }
 
 // findAllocatedSlice is a helper method to locate an allocated slice by its ID.
-func (m *VnpuManager) findAllocatedSlice(sliceID string) (*PhysicalNpuState, int, *VnpuSlice, error) {
-	for _, npu := range m.PhysicalNpus {
+func (m *VNPUManager) findAllocatedSlice(sliceID string) (*PhysicalNPUState, int, *VNPUSlice, error) {
+	for _, npu := range m.PhysicalNPUs {
 		for i, s := range npu.AllocatedSlices {
 			if s.SliceID == sliceID {
 				return npu, i, s, nil
@@ -248,7 +251,7 @@ func (m *VnpuManager) findAllocatedSlice(sliceID string) (*PhysicalNpuState, int
 }
 
 // wholeCardIsAvailable checks if the entire card slice is in the available slices.
-func (m *VnpuManager) wholeCardIsAvailable(npu *PhysicalNpuState) bool {
+func (m *VNPUManager) wholeCardIsAvailable(npu *PhysicalNPUState) bool {
 	for _, s := range npu.AvailableSlices {
 		if s.SliceID == npu.DeviceName {
 			return true
@@ -259,14 +262,19 @@ func (m *VnpuManager) wholeCardIsAvailable(npu *PhysicalNpuState) bool {
 
 func (d *driver) getAvailableDeviceNames() []string {
 	var deviceNames []string
-	if d.state.vnpuManager != nil {
-		for _, physicalNpu := range d.state.vnpuManager.PhysicalNpus {
-			for _, slice := range physicalNpu.AvailableSlices {
-				deviceNames = append(deviceNames, slice.SliceID)
-			}
-			for _, slice := range physicalNpu.AllocatedSlices {
-				deviceNames = append(deviceNames, slice.SliceID)
-			}
+	if featuregates.Enabled(featuregates.HAMivNPUCore) || d.state.vnpuManager == nil {
+		for name := range d.state.allocatable {
+			deviceNames = append(deviceNames, name)
+		}
+		return deviceNames
+	}
+
+	for _, physicalNpu := range d.state.vnpuManager.PhysicalNPUs {
+		for _, slice := range physicalNpu.AvailableSlices {
+			deviceNames = append(deviceNames, slice.SliceID)
+		}
+		for _, slice := range physicalNpu.AllocatedSlices {
+			deviceNames = append(deviceNames, slice.SliceID)
 		}
 	}
 
@@ -274,14 +282,14 @@ func (d *driver) getAvailableDeviceNames() []string {
 }
 
 // updateSupportTemplates updates the set of templates supported by the physical NPU.
-func (m *VnpuManager) updateSupportTemplates(npu *PhysicalNpuState) {
+func (m *VNPUManager) updateSupportTemplates(npu *PhysicalNPUState) {
 	// If no slices are allocated, support all templates.
 	if len(npu.AllocatedSlices) == 0 {
 		npu.SupportTemplates = cloneTemplates(m.Templates)
 		return
 	}
 	// Otherwise, filter templates as needed.
-	npu.SupportTemplates = make(map[string]*VnpuTemplate)
+	npu.SupportTemplates = make(map[string]*VNPUTemplate)
 	for name, tpl := range m.Templates {
 		// For example, keep only "vir01" when any slice is allocated.
 		if strings.HasPrefix(name, "vir01") {
@@ -291,8 +299,8 @@ func (m *VnpuManager) updateSupportTemplates(npu *PhysicalNpuState) {
 }
 
 // cloneTemplates performs a shallow copy of the templates.
-func cloneTemplates(src map[string]*VnpuTemplate) map[string]*VnpuTemplate {
-	dst := make(map[string]*VnpuTemplate, len(src))
+func cloneTemplates(src map[string]*VNPUTemplate) map[string]*VNPUTemplate {
+	dst := make(map[string]*VNPUTemplate, len(src))
 	for k, v := range src {
 		copied := *v
 		dst[k] = &copied

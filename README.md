@@ -7,7 +7,7 @@
 ## 里程碑
 - [x] 支持NPU整卡分配
 - [x] 支持vNPU动态分配（vNPU分配后重新计算剩余设备，并更新device列表）
-- [ ] 整理代码文件中的K8s定义，GPU->NPU
+- [x] 整理代码文件中的K8s定义，GPU->NPU
 - [ ] 实现多节点多卡调度分配
 - [ ] 实现基本故障处理
 - [ ] 实现基本运行时动态分配（可行性分析）
@@ -36,8 +36,8 @@
 
 首先克隆此仓库并进入目录。此演示中使用的所有脚本和示例Pod规范都包含在这里：
 ```
-git clone https://github.com/kubernetes-sigs/ascend-dra-driver.git
-cd ascend-dra-driver
+git clone https://github.com/4pdOss/hami-dra-driver.git
+cd hami-dra-driver
 ```
 
 1. 创建minikube单机集群：

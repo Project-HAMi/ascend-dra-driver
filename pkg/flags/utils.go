@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 The Kubernetes Authors.
+ * Copyright 2025 The HAMi Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,22 @@
  * limitations under the License.
  */
 
-// +k8s:deepcopy-gen=package
-// +groupName=gpu.resource.example.com
+package flags
 
-package v1alpha1
+import (
+	"strings"
+
+	"github.com/spf13/pflag"
+	"github.com/urfave/cli/v2"
+)
+
+func pflagToCLI(flag *pflag.Flag, category string) cli.Flag {
+	return &cli.GenericFlag{
+		Name:        flag.Name,
+		Category:    category,
+		Usage:       flag.Usage,
+		Value:       flag.Value,
+		Destination: flag.Value,
+		EnvVars:     []string{strings.ToUpper(strings.ReplaceAll(flag.Name, "-", "_"))},
+	}
+}

@@ -33,11 +33,16 @@ import (
 
 type driver struct {
 	client      coreclientset.Interface
-	helper      *kubeletplugin.Helper
+	helper      pluginHelper
 	state       *DeviceState
 	healthcheck *healthcheck
 	cancelCtx   func(error)
 	nodeName    string
+}
+
+type pluginHelper interface {
+	PublishResources(context.Context, resourceslice.DriverResources) error
+	Stop()
 }
 
 func NewDriver(ctx context.Context, config *Config) (*driver, error) {
@@ -81,7 +86,9 @@ func (d *driver) Shutdown(logger klog.Logger) error {
 	if d.healthcheck != nil {
 		d.healthcheck.Stop(logger)
 	}
-	d.helper.Stop()
+	if d.helper != nil {
+		d.helper.Stop()
+	}
 	return nil
 }
 

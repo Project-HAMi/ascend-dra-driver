@@ -33,6 +33,34 @@ spec:
       serviceAccountName: {{ include "ascend-dra-driver.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.kubeletPlugin.podSecurityContext | nindent 8 }}
+      initContainers:
+      - name: init-hami-vnpu-assets
+        image: {{ include "ascend-dra-driver.fullimage" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["sh", "-c"]
+        args:
+        - |
+          ASSETS_PATH="${HAMI_VNPU_ASSETS_PATH:-/usr/local/hami-vnpu-core-assets}"
+          mkdir -p /usr/local/hami-vnpu-core
+          chmod 0775 /usr/local/hami-vnpu-core
+          rm -f /usr/local/hami-vnpu-core/limiter
+          if [ -d "$ASSETS_PATH" ] && [ "$(ls -A "$ASSETS_PATH")" ]; then
+            cp -r "$ASSETS_PATH"/* /usr/local/hami-vnpu-core/
+          fi
+          mkdir -p /usr/local/hami-shared-region
+          chmod 0777 /usr/local/hami-shared-region
+        env:
+        - name: HAMI_VNPU_ASSETS_PATH
+          value: "/usr/local/hami-vnpu-core-assets"
+        securityContext:
+          {{- toYaml .Values.kubeletPlugin.containers.init.securityContext | nindent 10 }}
+        resources:
+          {{- toYaml .Values.kubeletPlugin.containers.init.resources | nindent 10 }}
+        volumeMounts:
+        - name: hami-vnpu-core
+          mountPath: /usr/local/hami-vnpu-core
+        - name: hami-shared-region
+          mountPath: /usr/local/hami-shared-region
       containers:
       - name: plugin
         securityContext:
@@ -55,7 +83,8 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        # Simulated number of devices the example driver will pretend to have.
+        # The number of physical NPU cards expected on the node. This should be
+        # updated to match the actual hardware configuration.
         - name: NUM_DEVICES
           value: "8"
         volumeMounts:
@@ -72,12 +101,21 @@ spec:
         - name: hiai-driver
           mountPath: /usr/local/Ascend
           readOnly: true
+        {{- if .Values.kubeletPlugin.npuSmiHostPath }}
+        - name: npu-smi
+          mountPath: /usr/local/bin/npu-smi
+          readOnly: true
+        {{- end }}
         - name: tmp
           mountPath: /tmp
         # 添加NPU模板信息文件挂载
         - name: npu-template-info
           mountPath: /etc/npu
           readOnly: true
+        - name: hami-shared-region
+          mountPath: /usr/local/hami-shared-region
+        - name: hami-vnpu-core
+          mountPath: /usr/local/hami-vnpu-core
       volumes:
       - name: plugins-registry
         hostPath:
@@ -97,6 +135,12 @@ spec:
       - name: hiai-driver
         hostPath:
           path: /usr/local/Ascend
+      {{- if .Values.kubeletPlugin.npuSmiHostPath }}
+      - name: npu-smi
+        hostPath:
+          path: {{ .Values.kubeletPlugin.npuSmiHostPath | quote }}
+          type: File
+      {{- end }}
       - name: tmp
         hostPath:
           path: /tmp
@@ -104,6 +148,14 @@ spec:
       - name: npu-template-info
         hostPath:
           path: /etc/npu
+          type: DirectoryOrCreate
+      - name: hami-shared-region
+        hostPath:
+          path: /usr/local/hami-shared-region
+          type: DirectoryOrCreate
+      - name: hami-vnpu-core
+        hostPath:
+          path: /usr/local/hami-vnpu-core
           type: DirectoryOrCreate
       {{- with .Values.kubeletPlugin.nodeSelector }}
       nodeSelector:

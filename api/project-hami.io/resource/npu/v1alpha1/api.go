@@ -26,10 +26,10 @@ import (
 )
 
 const (
-	GroupName = "gpu.resource.example.com"
+	GroupName = "npu.project-hami.io"
 	Version   = "v1alpha1"
 
-	GpuConfigKind = "GpuConfig"
+	NpuConfigKind = "NpuConfig"
 )
 
 // Decoder implements a decoder for objects in this API group.
@@ -38,25 +38,25 @@ var Decoder runtime.Decoder
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// GpuConfig holds the set of parameters for configuring a GPU.
-type GpuConfig struct {
+// NpuConfig holds the set of parameters for configuring an NPU.
+type NpuConfig struct {
 	metav1.TypeMeta `json:",inline"`
-	Sharing         *GpuSharing `json:"sharing,omitempty"`
-	VnpuSpec        *VnpuSpec   `json:"vnpuSpec,omitempty"`
+	Sharing         *NpuSharing `json:"sharing,omitempty"`
+	VNPUSpec        *VNPUSpec   `json:"vnpuSpec,omitempty"`
 }
 
-type VnpuSpec struct {
+type VNPUSpec struct {
 	TemplateName string `json:"templateName,omitempty"`
 }
 
-// DefaultGpuConfig provides the default GPU configuration.
-func DefaultGpuConfig() *GpuConfig {
-	return &GpuConfig{
+// DefaultNpuConfig provides the default NPU configuration.
+func DefaultNpuConfig() *NpuConfig {
+	return &NpuConfig{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: GroupName + "/" + Version,
-			Kind:       GpuConfigKind,
+			Kind:       NpuConfigKind,
 		},
-		Sharing: &GpuSharing{
+		Sharing: &NpuSharing{
 			Strategy: TimeSlicingStrategy,
 			TimeSlicingConfig: &TimeSlicingConfig{
 				Interval: "Default",
@@ -65,13 +65,13 @@ func DefaultGpuConfig() *GpuConfig {
 	}
 }
 
-// Normalize updates a GpuConfig config with implied default values based on other settings.
-func (c *GpuConfig) Normalize() error {
+// Normalize updates a NpuConfig config with implied default values based on other settings.
+func (c *NpuConfig) Normalize() error {
 	if c == nil {
 		return fmt.Errorf("config is 'nil'")
 	}
 	if c.Sharing == nil {
-		c.Sharing = &GpuSharing{
+		c.Sharing = &NpuSharing{
 			Strategy: TimeSlicingStrategy,
 		}
 	}
@@ -99,7 +99,7 @@ func init() {
 		Version: Version,
 	}
 	scheme.AddKnownTypes(schemeGroupVersion,
-		&GpuConfig{},
+		&NpuConfig{},
 	)
 	metav1.AddToGroupVersion(scheme, schemeGroupVersion)
 

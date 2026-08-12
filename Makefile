@@ -25,13 +25,27 @@ BUILDIMAGE ?= $(IMAGE_NAME)-build:$(BUILDIMAGE_TAG)
 CMDS := $(patsubst ./cmd/%/,%,$(sort $(dir $(wildcard ./cmd/*/))))
 CMD_TARGETS := $(patsubst %,cmd-%, $(CMDS))
 
+.PHONY: init-submodules
+init-submodules:
+	@./scripts/init-submodules.sh
+
+.PHONY: submodules
+submodules:
+	git submodule update --init --recursive
+
 CHECK_TARGETS := assert-fmt vet lint ineffassign misspell
-MAKE_TARGETS := binaries build check vendor fmt test examples cmds coverage generate $(CHECK_TARGETS)
+MAKE_TARGETS := binaries build check vendor fmt test examples cmds coverage generate image submodules $(CHECK_TARGETS)
 
 TARGETS := $(MAKE_TARGETS) $(CMD_TARGETS)
 
 DOCKER_TARGETS := $(patsubst %,docker-%, $(TARGETS))
 .PHONY: $(TARGETS) $(DOCKER_TARGETS)
+
+# Force CGO to use the dcmi header shipped with ascend-common, avoiding
+# conflicts with system-installed (often older) Ascend driver headers.
+DCMI_INCLUDE := $(CURDIR)/third_party/mind-cluster/component/ascend-common/devmanager/dcmi
+CGO_CFLAGS := -I$(DCMI_INCLUDE) $(CGO_CFLAGS)
+export CGO_CFLAGS
 
 GOOS ?= linux
 
@@ -42,7 +56,11 @@ endif
 cmds: $(CMD_TARGETS)
 $(CMD_TARGETS): cmd-%:
 	CGO_LDFLAGS_ALLOW='-Wl,--unresolved-symbols=ignore-in-object-files' GOOS=$(GOOS) \
-		go build -gcflags="all=-N -l" -ldflags "-X main.version=$(VERSION)" $(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
+		go build -gcflags="all=-N -l" -ldflags " \
+			-X $(VERSION_PACKAGE).version=$(VERSION) \
+			-X $(VERSION_PACKAGE).revision=$(REVISION) \
+			-X $(VERSION_PACKAGE).buildDate=$(BUILD_DATE)" \
+			$(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
 
 build:
 	GOOS=$(GOOS) go build ./...
@@ -101,6 +119,13 @@ test: build cmds
 coverage: test
 	cat $(COVERAGE_FILE) | grep -v "_mock.go" > $(COVERAGE_FILE).no-mocks
 	go tool cover -func=$(COVERAGE_FILE).no-mocks
+
+image: submodules
+	$(CONTAINER_TOOL) build \
+		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
+		--build-arg LIBVNPU_BUILD_IMAGE="$(LIBVNPU_BUILD_IMAGE)" \
+		--tag "$(IMAGE_NAME):$(vVERSION)" \
+		-f deployments/container/Dockerfile .
 
 generate: generate-deepcopy
 

@@ -1,4 +1,4 @@
-# Default values for draexample--driver.
+# Default values for ascend-dra-driver.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
@@ -11,6 +11,7 @@ allowDefaultNamespace: false
 
 imagePullSecrets: []
 image:
+  # TODO: replace with your own container registry before deploying.
   repository: registry.example.com/ascend-dra-driver
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
@@ -46,6 +47,9 @@ controller:
 
 kubeletPlugin:
   priorityClassName: "system-node-critical"
+  # Optional host path for npu-smi when it is not available below the
+  # /usr/local/Ascend mount. HAMivNPUCore startup requires npu-smi.
+  npuSmiHostPath: ""
   updateStrategy:
     type: RollingUpdate
   podAnnotations: {}
@@ -55,7 +59,8 @@ kubeletPlugin:
   affinity: {}
   containers:
     init:
-      securityContext: {}
+      securityContext:
+        privileged: true
       resources: {}
     plugin:
       securityContext:

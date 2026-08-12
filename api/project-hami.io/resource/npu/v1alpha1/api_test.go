@@ -23,20 +23,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestGpuConfigNormalize(t *testing.T) {
+func TestNpuConfigNormalize(t *testing.T) {
 	tests := map[string]struct {
-		gpuConfig   *GpuConfig
-		expected    *GpuConfig
+		npuConfig   *NpuConfig
+		expected    *NpuConfig
 		expectedErr error
 	}{
-		"nil GpuConfig": {
-			gpuConfig:   nil,
+		"nil NpuConfig": {
+			npuConfig:   nil,
 			expectedErr: errors.New("config is 'nil'"),
 		},
-		"empty GpuConfig": {
-			gpuConfig: &GpuConfig{},
-			expected: &GpuConfig{
-				Sharing: &GpuSharing{
+		"empty NpuConfig": {
+			npuConfig: &NpuConfig{},
+			expected: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: TimeSlicingStrategy,
 					TimeSlicingConfig: &TimeSlicingConfig{
 						Interval: DefaultTimeSlice,
@@ -44,14 +44,14 @@ func TestGpuConfigNormalize(t *testing.T) {
 				},
 			},
 		},
-		"empty GpuConfig with SpacePartitioning": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+		"empty NpuConfig with SpacePartitioning": {
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: SpacePartitioningStrategy,
 				},
 			},
-			expected: &GpuConfig{
-				Sharing: &GpuSharing{
+			expected: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: SpacePartitioningStrategy,
 					SpacePartitioningConfig: &SpacePartitioningConfig{
 						PartitionCount: 1,
@@ -59,9 +59,9 @@ func TestGpuConfigNormalize(t *testing.T) {
 				},
 			},
 		},
-		"full GpuConfig": {
-			gpuConfig: &GpuConfig{
-				Sharing: &GpuSharing{
+		"full NpuConfig": {
+			npuConfig: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: SpacePartitioningStrategy,
 					TimeSlicingConfig: &TimeSlicingConfig{
 						Interval: ShortTimeSlice,
@@ -71,8 +71,8 @@ func TestGpuConfigNormalize(t *testing.T) {
 					},
 				},
 			},
-			expected: &GpuConfig{
-				Sharing: &GpuSharing{
+			expected: &NpuConfig{
+				Sharing: &NpuSharing{
 					Strategy: SpacePartitioningStrategy,
 					TimeSlicingConfig: &TimeSlicingConfig{
 						Interval: ShortTimeSlice,
@@ -83,16 +83,16 @@ func TestGpuConfigNormalize(t *testing.T) {
 				},
 			},
 		},
-		"default GpuConfig is already normalized": {
-			gpuConfig: DefaultGpuConfig(),
-			expected:  DefaultGpuConfig(),
+		"default NpuConfig is already normalized": {
+			npuConfig: DefaultNpuConfig(),
+			expected:  DefaultNpuConfig(),
 		},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			err := test.gpuConfig.Normalize()
-			assert.Equal(t, test.expected, test.gpuConfig)
+			err := test.npuConfig.Normalize()
+			assert.Equal(t, test.expected, test.npuConfig)
 			assert.Equal(t, test.expectedErr, err)
 		})
 	}

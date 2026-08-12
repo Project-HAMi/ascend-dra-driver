@@ -23,31 +23,31 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestGpuSharingGetTimeSlicingConfig(t *testing.T) {
+func TestNpuSharingGetTimeSlicingConfig(t *testing.T) {
 	tests := map[string]struct {
-		gpuSharing  *GpuSharing
+		npuSharing  *NpuSharing
 		expected    *TimeSlicingConfig
 		expectedErr error
 	}{
-		"nil GpuSharing": {
-			gpuSharing:  nil,
+		"nil NpuSharing": {
+			npuSharing:  nil,
 			expectedErr: errors.New("no sharing set to get config from"),
 		},
 		"strategy is not TimeSlicing": {
-			gpuSharing: &GpuSharing{
+			npuSharing: &NpuSharing{
 				Strategy: SpacePartitioningStrategy,
 			},
 			expectedErr: errors.New("strategy is not set to 'TimeSlicing'"),
 		},
 		"non-nil SpacePartitioningConfig": {
-			gpuSharing: &GpuSharing{
+			npuSharing: &NpuSharing{
 				Strategy:                TimeSlicingStrategy,
 				SpacePartitioningConfig: &SpacePartitioningConfig{},
 			},
 			expectedErr: errors.New("cannot use SpacePartitioningConfig with the 'TimeSlicing' strategy"),
 		},
 		"valid TimeSlicingConfig": {
-			gpuSharing: &GpuSharing{
+			npuSharing: &NpuSharing{
 				Strategy: TimeSlicingStrategy,
 				TimeSlicingConfig: &TimeSlicingConfig{
 					Interval: LongTimeSlice,
@@ -61,38 +61,38 @@ func TestGpuSharingGetTimeSlicingConfig(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			timeSlicing, err := test.gpuSharing.GetTimeSlicingConfig()
+			timeSlicing, err := test.npuSharing.GetTimeSlicingConfig()
 			assert.Equal(t, test.expected, timeSlicing)
 			assert.Equal(t, test.expectedErr, err)
 		})
 	}
 
 }
-func TestGpuSharingGetSpacePartitioningConfig(t *testing.T) {
+func TestNpuSharingGetSpacePartitioningConfig(t *testing.T) {
 	tests := map[string]struct {
-		gpuSharing  *GpuSharing
+		npuSharing  *NpuSharing
 		expected    *SpacePartitioningConfig
 		expectedErr error
 	}{
-		"nil GpuSharing": {
-			gpuSharing:  nil,
+		"nil NpuSharing": {
+			npuSharing:  nil,
 			expectedErr: errors.New("no sharing set to get config from"),
 		},
 		"strategy is not SpacePartitioning": {
-			gpuSharing: &GpuSharing{
+			npuSharing: &NpuSharing{
 				Strategy: TimeSlicingStrategy,
 			},
 			expectedErr: errors.New("strategy is not set to 'SpacePartitioning'"),
 		},
 		"non-nil TimeSlicingConfig": {
-			gpuSharing: &GpuSharing{
+			npuSharing: &NpuSharing{
 				Strategy:          SpacePartitioningStrategy,
 				TimeSlicingConfig: &TimeSlicingConfig{},
 			},
 			expectedErr: errors.New("cannot use TimeSlicingConfig with the 'SpacePartitioning' strategy"),
 		},
 		"valid SpacePartitioningConfig": {
-			gpuSharing: &GpuSharing{
+			npuSharing: &NpuSharing{
 				Strategy: SpacePartitioningStrategy,
 				SpacePartitioningConfig: &SpacePartitioningConfig{
 					PartitionCount: 5,
@@ -106,7 +106,7 @@ func TestGpuSharingGetSpacePartitioningConfig(t *testing.T) {
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			spacePartitioning, err := test.gpuSharing.GetSpacePartitioningConfig()
+			spacePartitioning, err := test.npuSharing.GetSpacePartitioningConfig()
 			assert.Equal(t, test.expected, spacePartitioning)
 			assert.Equal(t, test.expectedErr, err)
 		})

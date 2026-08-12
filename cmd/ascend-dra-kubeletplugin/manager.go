@@ -17,13 +17,14 @@
 package main
 
 import (
-	"Ascend-dra-driver/pkg/common"
 	"fmt"
 	"strconv"
 	"strings"
 
-	"huawei.com/npu-exporter/v5/devmanager"
-	npuCommon "huawei.com/npu-exporter/v5/devmanager/common"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/common"
+
+	"ascend-common/devmanager"
+	npuCommon "ascend-common/devmanager/common"
 )
 
 type Device struct {
@@ -38,13 +39,13 @@ type Device struct {
 }
 
 type AscendManager struct {
-	mgr *devmanager.DeviceManager
+	mgr devmanager.DeviceInterface
 	//nodeName string
 	devs []*Device
 }
 
 func NewAscendManager() (*AscendManager, error) {
-	mgr, err := devmanager.AutoInit("")
+	mgr, err := devmanager.AutoInit("", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +55,7 @@ func NewAscendManager() (*AscendManager, error) {
 	}, nil
 }
 
-func (am *AscendManager) getAiCoreCount(cgoVDevInfo npuCommon.VirtualDevInfo) (int32, error) {
+func (am *AscendManager) getAICoreCount(cgoVDevInfo npuCommon.VirtualDevInfo) (int32, error) {
 	chipAICore := cgoVDevInfo.TotalResource.Computing.Aic
 	if chipAICore < common.MinAICoreNum || chipAICore > common.MaxAICoreNum {
 		return 0, fmt.Errorf("invalid ai core num %f", chipAICore)
@@ -94,8 +95,12 @@ func (am *AscendManager) GetChipMem() (int32, error) {
 	return 0, fmt.Errorf("not get memory size")
 }
 
-// GetChipAiCoreCount get chip aicore count
-func (am *AscendManager) GetChipAiCoreCount() (int32, error) {
+func (am *AscendManager) GetDeviceMemoryInfo(logicID int32) (*npuCommon.MemoryInfo, error) {
+	return am.mgr.GetDeviceMemoryInfo(logicID)
+}
+
+// GetChipAICoreCount get chip aicore count
+func (am *AscendManager) GetChipAICoreCount() (int32, error) {
 	_, logicIDs, err := am.mgr.GetDeviceList()
 	if err != nil {
 		return 0, err
@@ -111,23 +116,23 @@ func (am *AscendManager) GetChipAiCoreCount() (int32, error) {
 		if err != nil {
 			// if not support found aicore number, setting a default value
 
-			return common.DefaultAiCoreNum, nil
+			return common.DefaultAICoreNum, nil
 		}
-		return am.getAiCoreCount(cgoVDevInfo)
+		return am.getAICoreCount(cgoVDevInfo)
 	}
 	return 0, fmt.Errorf("not get aicore count")
 }
 
-func (am *AscendManager) getDavinCiDev(logicID int32) (common.DavinCiDev, error) {
+func (am *AscendManager) getDavinciDev(logicID int32) (common.DavinciDev, error) {
 	phyID, err := am.mgr.GetPhysicIDFromLogicID(logicID)
 	if err != nil {
-		return common.DavinCiDev{}, err
+		return common.DavinciDev{}, err
 	}
 	cardID, _, err := am.mgr.GetCardIDDeviceID(logicID)
 	if err != nil {
-		return common.DavinCiDev{}, err
+		return common.DavinciDev{}, err
 	}
-	return common.DavinCiDev{
+	return common.DavinciDev{
 		LogicID: logicID,
 		PhyID:   phyID,
 		CardID:  cardID,
@@ -142,35 +147,35 @@ func (am *AscendManager) getVirtualDevice(logicID int32) (npuCommon.VirtualDevIn
 	return virtualDevInfos, nil
 }
 
-func (am *AscendManager) assemblePhyDevices(devType string, davinCiDev common.DavinCiDev,
-	devices *[]common.NpuDevice,
+func (am *AscendManager) assemblePhyDevices(devType string, davinciDev common.DavinciDev,
+	devices *[]common.NPUDevice,
 ) {
-	deviceName := fmt.Sprintf("%s-%d", devType, davinCiDev.PhyID)
-	device := am.assembleNpuDeviceStruct(devType, deviceName, davinCiDev)
+	deviceName := fmt.Sprintf("%s-%d", devType, davinciDev.PhyID)
+	device := am.assembleNPUDeviceStruct(devType, deviceName, davinciDev)
 	*devices = append(*devices, device)
 }
 
-func (am *AscendManager) assembleNpuDeviceStruct(deviType, deviceName string,
-	davinCiDev common.DavinCiDev) common.NpuDevice {
+func (am *AscendManager) assembleNPUDeviceStruct(deviType, deviceName string,
+	davinciDev common.DavinciDev) common.NPUDevice {
 
-	return common.NpuDevice{
+	return common.NPUDevice{
 		DevType:    deviType,
 		DeviceName: deviceName,
-		LogicID:    davinCiDev.LogicID,
-		PhyID:      davinCiDev.PhyID,
-		CardID:     davinCiDev.CardID,
+		LogicID:    davinciDev.LogicID,
+		PhyID:      davinciDev.PhyID,
+		CardID:     davinciDev.CardID,
 	}
 }
 
-func (am *AscendManager) assembleVirtualDevices(chipType string, davinCiDev common.DavinCiDev,
+func (am *AscendManager) assembleVirtualDevices(chipType string, davinciDev common.DavinciDev,
 	vDevInfos npuCommon.VirtualDevInfo,
-	devices *[]common.NpuDevice) {
+	devices *[]common.NPUDevice) {
 	for _, subVDevInfo := range vDevInfos.VDevInfo {
-		vDeviType, deviceName, err := am.assembleSpecVirtualDevice(chipType, davinCiDev.PhyID, subVDevInfo)
+		vDeviType, deviceName, err := am.assembleSpecVirtualDevice(chipType, davinciDev.PhyID, subVDevInfo)
 		if err != nil {
 			continue
 		}
-		device := am.assembleNpuDeviceStruct(vDeviType, deviceName, davinCiDev)
+		device := am.assembleNPUDeviceStruct(vDeviType, deviceName, davinciDev)
 		*devices = append(*devices, device)
 	}
 }
@@ -191,22 +196,22 @@ func (am *AscendManager) assembleSpecVirtualDevice(chipType string, phyID int32,
 	return vDeviType, devID, nil
 }
 
-func (am *AscendManager) NewHwDevManager() (common.NpuAllInfo, error) {
+func (am *AscendManager) NewHwDevManager() (common.NPUAllInfo, error) {
 	devNum, devList, err := am.mgr.GetDeviceList()
 	if err != nil {
-		return common.NpuAllInfo{}, err
+		return common.NPUAllInfo{}, err
 	}
-	var allDevices []common.NpuDevice
+	var allDevices []common.NPUDevice
 	var chipType = ""
 	for i := int32(0); i < devNum; i++ {
-		davinCiDev, err := am.getDavinCiDev(devList[i])
+		davinciDev, err := am.getDavinciDev(devList[i])
 		if err != nil {
-			return common.NpuAllInfo{}, err
+			return common.NPUAllInfo{}, err
 		}
 		if chipType == "" {
-			chipInfo, err := am.mgr.GetChipInfo(davinCiDev.LogicID)
+			chipInfo, err := am.mgr.GetChipInfo(davinciDev.LogicID)
 			if err != nil {
-				return common.NpuAllInfo{}, nil
+				return common.NPUAllInfo{}, nil
 			}
 			chipType = chipInfo.Name
 		}
@@ -215,13 +220,13 @@ func (am *AscendManager) NewHwDevManager() (common.NpuAllInfo, error) {
 
 		}
 		if vDevInfos.TotalResource.VDevNum > common.MaxVirtualDeviceNum {
-			return common.NpuAllInfo{}, fmt.Errorf("invalid virtual device count")
+			return common.NPUAllInfo{}, fmt.Errorf("invalid virtual device count")
 		}
 		if vDevInfos.TotalResource.VDevNum == 0 {
-			am.assemblePhyDevices(chipType, davinCiDev, &allDevices)
+			am.assemblePhyDevices(chipType, davinciDev, &allDevices)
 			continue
 		}
-		am.assembleVirtualDevices(chipType, davinCiDev, vDevInfos, &allDevices)
+		am.assembleVirtualDevices(chipType, davinciDev, vDevInfos, &allDevices)
 	}
-	return common.NpuAllInfo{AllDevs: allDevices}, nil
+	return common.NPUAllInfo{AllDevs: allDevices}, nil
 }

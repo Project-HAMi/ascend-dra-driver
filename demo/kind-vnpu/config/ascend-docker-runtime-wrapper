@@ -1,0 +1,4 @@
+#!/bin/sh
+
+export LD_LIBRARY_PATH="/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/driver/lib64/common:/usr/local/dcmi${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+exec /usr/local/Ascend/Ascend-Docker-Runtime/ascend-docker-runtime "$@"
