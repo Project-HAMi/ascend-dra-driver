@@ -22,3 +22,4 @@ tmp/
 
 # Machine-local development and test environment notes.
 AGENTS.local.md
+test_dra.md
