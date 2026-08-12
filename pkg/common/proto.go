@@ -97,7 +97,7 @@ type FileWatch struct {
 
 // DevStatusSet groups devices by their health state.
 type DevStatusSet struct {
-	UnHealthyDevice    sets.String
-	NetUnHealthyDevice sets.String
-	FreeHealthyDevice  map[string]sets.String
+	UnHealthyDevice    sets.Set[string]
+	NetUnHealthyDevice sets.Set[string]
+	FreeHealthyDevice  map[string]sets.Set[string]
 }

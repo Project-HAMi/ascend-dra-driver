@@ -1,0 +1,79 @@
+name: Helm Lint
+
+on:
+  pull_request:
+    branches:
+      - main
+
+env:
+  HELM_VERSION: "v3.20.0"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      helm: ${{ steps.filter.outputs.helm }}
+    steps:
+      - name: Detect Helm changes
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            helm:
+              - 'deployments/helm/ascend-dra-driver/**'
+              - 'Makefile'
+              - '.github/workflows/helm-lint.yaml'
+              - '.github/workflows/build-helm-release.yaml'
+
+  lint-test:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.helm == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5.0.0
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Verify Helm chart
+        run: |
+          make verify-helm-chart
+          make verify-helm-release-path
+
+  helm-lint-required:
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - lint-test
+    if: always()
+    steps:
+      - name: Check Helm workflow result
+        shell: bash
+        run: |
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "Helm change detection did not complete successfully: ${{ needs.changes.result }}"
+            exit 1
+          fi
+
+          if [[ "${{ needs.changes.outputs.helm }}" != "true" ]]; then
+            echo "No Helm-relevant changes."
+            exit 0
+          fi
+
+          if [[ "${{ needs.lint-test.result }}" != "success" ]]; then
+            echo "Helm verification did not complete successfully: ${{ needs.lint-test.result }}"
+            exit 1
+          fi

@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-GOLANG_VERSION ?= 1.26.0
-LIBVNPU_BUILD_IMAGE ?= ascendai/cann:9.0.0-devel
+GOLANG_VERSION ?= 1.26.2
+BASE_IMAGE ?= ubuntu:20.04
+GOPROXY ?= https://proxy.golang.org,direct
 
 DRIVER_NAME := ascend-dra-driver
 MODULE := .
@@ -31,6 +32,6 @@ PLURAL_EXCEPTIONS  = DeviceClassParameters:DeviceClassParameters
 PLURAL_EXCEPTIONS += NpuConfig:NpuConfig
 
 ifeq ($(IMAGE_NAME),)
-REGISTRY ?= registry.example.com
+REGISTRY ?= projecthami
 IMAGE_NAME = $(REGISTRY)/$(DRIVER_NAME)
 endif

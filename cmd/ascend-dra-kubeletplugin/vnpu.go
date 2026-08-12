@@ -77,7 +77,11 @@ func parseTemplateInfo(output string, templates map[string]*VNPUTemplate) error 
 	}
 
 	// Skip the line immediately after the header
-	if scanner.Scan() {
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("read template info after header: %w", err)
+		}
+		return fmt.Errorf("template info ended after header")
 	}
 
 	// Skip until we reach a line containing "=="
@@ -248,16 +252,6 @@ func (m *VNPUManager) findAllocatedSlice(sliceID string) (*PhysicalNPUState, int
 		}
 	}
 	return nil, -1, nil, fmt.Errorf("VNPU slice %s not found", sliceID)
-}
-
-// wholeCardIsAvailable checks if the entire card slice is in the available slices.
-func (m *VNPUManager) wholeCardIsAvailable(npu *PhysicalNPUState) bool {
-	for _, s := range npu.AvailableSlices {
-		if s.SliceID == npu.DeviceName {
-			return true
-		}
-	}
-	return false
 }
 
 func (d *driver) getAvailableDeviceNames() []string {

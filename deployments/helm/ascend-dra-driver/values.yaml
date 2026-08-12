@@ -11,8 +11,7 @@ allowDefaultNamespace: false
 
 imagePullSecrets: []
 image:
-  # TODO: replace with your own container registry before deploying.
-  repository: registry.example.com/ascend-dra-driver
+  repository: projecthami/ascend-dra-driver
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""

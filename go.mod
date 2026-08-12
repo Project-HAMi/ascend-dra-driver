@@ -2,7 +2,7 @@ module github.com/Project-HAMi/hami-dra-driver
 
 go 1.26
 
-toolchain go1.26.0
+toolchain go1.26.2
 
 require (
 	ascend-common v0.0.0
@@ -20,6 +20,7 @@ require (
 	k8s.io/kubelet v0.34.0
 	k8s.io/kubernetes v1.34.0
 	k8s.io/utils v0.0.0-20250604170112-4c0f3b243397
+	sigs.k8s.io/yaml v1.6.0
 	tags.cncf.io/container-device-interface v0.8.0
 	tags.cncf.io/container-device-interface/specs-go v0.8.0
 )
@@ -85,7 +86,6 @@ require (
 	sigs.k8s.io/json v0.0.0-20241014173422-cfa47c3a1cc8 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
-	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
 replace ascend-common => ./third_party/mind-cluster/component/ascend-common

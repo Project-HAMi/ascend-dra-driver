@@ -58,6 +58,22 @@ func (f *fakePluginHelper) lastPublished(t *testing.T) resourceslice.DriverResou
 	return f.published[len(f.published)-1]
 }
 
+func TestGetOpaqueDeviceConfigsIncludesClaimAfterClass(t *testing.T) {
+	configs, err := GetOpaqueDeviceConfigs(configapi.Decoder, consts.DriverName, []resourceapi.DeviceAllocationConfiguration{
+		npuAllocationConfig(t, resourceapi.AllocationConfigSourceClaim, "claim-template"),
+		npuAllocationConfig(t, resourceapi.AllocationConfigSourceClass, "class-template"),
+	})
+	require.NoError(t, err)
+	require.Len(t, configs, 2)
+
+	classConfig, ok := configs[0].Config.(*configapi.NpuConfig)
+	require.True(t, ok)
+	claimConfig, ok := configs[1].Config.(*configapi.NpuConfig)
+	require.True(t, ok)
+	assert.Equal(t, "class-template", classConfig.VNPUSpec.TemplateName)
+	assert.Equal(t, "claim-template", claimConfig.VNPUSpec.TemplateName)
+}
+
 func TestMockDRAFullCardLifecycle(t *testing.T) {
 	driver, publisher, cdiRoot := newMockE2EDriver(t)
 
@@ -238,6 +254,15 @@ func allocatedClaim(name, uid, deviceName string, configs []resourceapi.DeviceAl
 
 func classNpuConfig(t *testing.T, templateName string) resourceapi.DeviceAllocationConfiguration {
 	t.Helper()
+	return npuAllocationConfig(t, resourceapi.AllocationConfigSourceClass, templateName)
+}
+
+func npuAllocationConfig(
+	t *testing.T,
+	source resourceapi.AllocationConfigSource,
+	templateName string,
+) resourceapi.DeviceAllocationConfiguration {
+	t.Helper()
 	raw, err := json.Marshal(&configapi.NpuConfig{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: configapi.GroupName + "/" + configapi.Version,
@@ -247,7 +272,7 @@ func classNpuConfig(t *testing.T, templateName string) resourceapi.DeviceAllocat
 	})
 	require.NoError(t, err)
 	return resourceapi.DeviceAllocationConfiguration{
-		Source: resourceapi.AllocationConfigSourceClass,
+		Source: source,
 		DeviceConfiguration: resourceapi.DeviceConfiguration{
 			Opaque: &resourceapi.OpaqueDeviceConfiguration{
 				Driver: consts.DriverName,

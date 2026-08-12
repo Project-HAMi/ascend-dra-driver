@@ -18,6 +18,7 @@ dev/tools/npc
 .idea
 dev/tools/dra-example-kubeletplugin
 tmp/
+/dist/
 
 # Machine-local development and test environment notes.
 AGENTS.local.md
