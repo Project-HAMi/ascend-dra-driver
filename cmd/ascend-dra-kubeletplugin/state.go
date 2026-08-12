@@ -436,10 +436,10 @@ func (s *DeviceState) unprepareDevices(claimUID string, devices PreparedDevices)
 		return nil
 	}
 	for _, dev := range devices {
-		if err := s.vnpuManager.ReleaseSlice(dev.Device.DeviceName); err != nil {
-			log.Printf("Warning: failed to release vNPU slice %s: %v", dev.Device.DeviceName, err)
+		if err := s.vnpuManager.ReleaseSlice(dev.DeviceName); err != nil {
+			log.Printf("Warning: failed to release vNPU slice %s: %v", dev.DeviceName, err)
 		} else {
-			log.Printf("Successfully released vNPU slice: %s", dev.Device.DeviceName)
+			log.Printf("Successfully released vNPU slice: %s", dev.DeviceName)
 		}
 	}
 	return nil
@@ -785,13 +785,14 @@ func GetOpaqueDeviceConfigs(
 		}
 	}
 	candidateConfigs = append(candidateConfigs, classConfigs...)
+	candidateConfigs = append(candidateConfigs, claimConfigs...)
 
 	// Decode all configs that are relevant for the driver.
 	var resultConfigs []*OpaqueDeviceConfig
 	for _, config := range candidateConfigs {
 		// If this is nil, the driver doesn't support some future API extension
 		// and needs to be updated.
-		if config.DeviceConfiguration.Opaque == nil {
+		if config.Opaque == nil {
 			return nil, fmt.Errorf("only opaque parameters are supported by this driver")
 		}
 
@@ -799,11 +800,11 @@ func GetOpaqueDeviceConfigs(
 		// single request can be satisfied by different drivers. This is not
 		// an error -- drivers must skip over other driver's configs in order
 		// to support this.
-		if config.DeviceConfiguration.Opaque.Driver != driverName {
+		if config.Opaque.Driver != driverName {
 			continue
 		}
 
-		decodedConfig, err := runtime.Decode(decoder, config.DeviceConfiguration.Opaque.Parameters.Raw)
+		decodedConfig, err := runtime.Decode(decoder, config.Opaque.Parameters.Raw)
 		if err != nil {
 			return nil, fmt.Errorf("error decoding config parameters: %w", err)
 		}
@@ -1017,7 +1018,7 @@ func upsertDeviceClass(clientset *kubernetes.Clientset, name, expr, tpl string) 
 	}
 
 	if !deviceClassEquals(got, want) {
-		want.ObjectMeta.ResourceVersion = got.ObjectMeta.ResourceVersion
+		want.ResourceVersion = got.ResourceVersion
 		_, updateErr := clientset.ResourceV1().DeviceClasses().Update(
 			context.TODO(), want, metav1.UpdateOptions{},
 		)
@@ -1087,7 +1088,7 @@ func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *Ph
 		return false
 	}
 
-	var sliceType string = "NPU"
+	sliceType := "NPU"
 	for _, slice := range physicalNpu.AvailableSlices {
 		if slice.SliceID == deviceName {
 			sliceType = slice.Type

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 CONTAINER_TOOL ?= docker
+CARGO    ?= cargo
 MKDIR    ?= mkdir
 TR       ?= tr
 DIST_DIR ?= $(CURDIR)/dist
@@ -24,6 +25,7 @@ BUILDIMAGE ?= $(IMAGE_NAME)-build:$(BUILDIMAGE_TAG)
 
 CMDS := $(patsubst ./cmd/%/,%,$(sort $(dir $(wildcard ./cmd/*/))))
 CMD_TARGETS := $(patsubst %,cmd-%, $(CMDS))
+GO_PACKAGES := ./api/... ./cmd/... ./pkg/...
 
 .PHONY: init-submodules
 init-submodules:
@@ -34,7 +36,9 @@ submodules:
 	git submodule update --init --recursive
 
 CHECK_TARGETS := assert-fmt vet lint ineffassign misspell
-MAKE_TARGETS := binaries build check vendor fmt test examples cmds coverage generate image submodules $(CHECK_TARGETS)
+MAKE_TARGETS := binaries build check vendor fmt test examples cmds coverage generate image \
+	libvnpu-artifacts verify-libvnpu-artifacts verify-helm-chart \
+	verify-helm-release-path submodules $(CHECK_TARGETS)
 
 TARGETS := $(MAKE_TARGETS) $(CMD_TARGETS)
 
@@ -63,7 +67,7 @@ $(CMD_TARGETS): cmd-%:
 			$(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
 
 build:
-	GOOS=$(GOOS) go build ./...
+	GOOS=$(GOOS) go build $(GO_PACKAGES)
 
 examples: $(EXAMPLE_TARGETS)
 $(EXAMPLE_TARGETS): example-%:
@@ -78,12 +82,10 @@ vendor:
 
 # Apply go fmt to the codebase
 fmt:
-	go list -f '{{.Dir}}' $(MODULE)/... \
-		| xargs gofmt -s -l -w
+	git ls-files '*.go' | xargs gofmt -s -l -w
 
 assert-fmt:
-	go list -f '{{.Dir}}' $(MODULE)/... \
-		| xargs gofmt -s -l > fmt.out
+	git ls-files '*.go' | xargs gofmt -s -l > fmt.out
 	@if [ -s fmt.out ]; then \
 		echo "\nERROR: The following files are not formatted:\n"; \
 		cat fmt.out; \
@@ -97,16 +99,16 @@ ineffassign:
 	ineffassign $(MODULE)/...
 
 lint:
-	golangci-lint run ./...
+	golangci-lint run $(GO_PACKAGES)
 
 misspell:
 	misspell $(MODULE)/...
 
 vet:
-	go vet $(MODULE)/...
+	go vet $(GO_PACKAGES)
 
-# Ensure that all log calls support contextual logging.
-test: logcheck
+# Ensure that all log calls support contextual logging. This remains a
+# standalone target because the repository does not vendor hack/tools.
 .PHONY: logcheck
 logcheck:
 	(cd hack/tools && GOBIN=$(PWD) go install sigs.k8s.io/logtools/logcheck)
@@ -114,18 +116,60 @@ logcheck:
 
 COVERAGE_FILE := coverage.out
 test: build cmds
-	go test -v -coverprofile=$(COVERAGE_FILE) $(MODULE)/...
+	go test -v -coverprofile=$(COVERAGE_FILE) $(GO_PACKAGES)
 
 coverage: test
 	cat $(COVERAGE_FILE) | grep -v "_mock.go" > $(COVERAGE_FILE).no-mocks
 	go tool cover -func=$(COVERAGE_FILE).no-mocks
 
-image: submodules
+LIBVNPU_ARTIFACTS_DIR := $(DIST_DIR)/hami-vnpu-core
+LIBVNPU_LIBRARY := $(LIBVNPU_ARTIFACTS_DIR)/libvnpu.so
+LIBVNPU_PRELOAD := $(LIBVNPU_ARTIFACTS_DIR)/ld.so.preload
+
+libvnpu-artifacts: submodules
+	$(CARGO) build --release --manifest-path $(CURDIR)/hami-vnpu-core/Cargo.toml
+	$(MKDIR) -p $(LIBVNPU_ARTIFACTS_DIR)
+	cp $(CURDIR)/hami-vnpu-core/target/release/libvnpu.so $(LIBVNPU_LIBRARY)
+	printf '%s\n' '/hami-vnpu-core/libvnpu.so' > $(LIBVNPU_PRELOAD)
+
+verify-libvnpu-artifacts:
+	test -s $(LIBVNPU_LIBRARY)
+	grep -Fxq '/hami-vnpu-core/libvnpu.so' $(LIBVNPU_PRELOAD)
+
+image: submodules verify-libvnpu-artifacts
 	$(CONTAINER_TOOL) build \
 		--build-arg GOLANG_VERSION="$(GOLANG_VERSION)" \
-		--build-arg LIBVNPU_BUILD_IMAGE="$(LIBVNPU_BUILD_IMAGE)" \
+		--build-arg BASE_IMAGE="$(BASE_IMAGE)" \
+		--build-arg GOPROXY="$(GOPROXY)" \
+		--build-arg VERSION="$(VERSION)" \
+		--build-arg REVISION="$(REVISION)" \
+		--build-arg BUILD_DATE="$(BUILD_DATE)" \
 		--tag "$(IMAGE_NAME):$(vVERSION)" \
 		-f deployments/container/Dockerfile .
+
+HELM_CHART_DIR := deployments/helm/ascend-dra-driver
+HELM_CHART_NAME := ascend-dra-driver
+
+verify-helm-chart:
+	helm lint --strict $(HELM_CHART_DIR)
+	helm template $(HELM_CHART_NAME) $(HELM_CHART_DIR) >/dev/null
+
+verify-helm-release-path:
+	@set -eu; \
+	packages="$$(mktemp -d)"; \
+	trap 'rm -rf "$$packages"' EXIT; \
+	chart_version="$$(awk '$$1 == "version:" { print $$2; exit }' $(HELM_CHART_DIR)/Chart.yaml)"; \
+	if [ -z "$$chart_version" ]; then echo 'failed to resolve chart version' >&2; exit 1; fi; \
+	helm package $(HELM_CHART_DIR) --destination "$$packages" >/dev/null; \
+	package_path="$$packages/$(HELM_CHART_NAME)-$$chart_version.tgz"; \
+	test -f "$$package_path"; \
+	helm show chart "$$package_path" >/dev/null; \
+	grep -Fq 'uses: helm/chart-releaser-action@v1.6.0' .github/workflows/build-helm-release.yaml; \
+	grep -Fq 'charts_dir: deployments/helm' .github/workflows/build-helm-release.yaml; \
+	if grep -Eq '^[[:space:]]*skip_packaging:[[:space:]]*true' .github/workflows/build-helm-release.yaml; then echo 'chart-releaser skip_packaging must remain disabled' >&2; exit 1; fi; \
+	show_line="$$(grep -n 'helm show chart' .github/workflows/build-helm-release.yaml | cut -d: -f1)"; \
+	package_line="$$(grep -n 'helm package "$${{ env.CHART_PATH }}" --destination .cr-release-packages' .github/workflows/build-helm-release.yaml | cut -d: -f1)"; \
+	if [ -z "$$show_line" ] || [ -z "$$package_line" ] || [ "$$show_line" -ge "$$package_line" ]; then echo 'GHCR existence check must precede packaging' >&2; exit 1; fi
 
 generate: generate-deepcopy
 

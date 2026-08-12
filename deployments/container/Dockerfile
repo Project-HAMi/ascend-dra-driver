@@ -12,60 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG GOLANG_VERSION=undefined
-ARG BASE_IMAGE=undefined
-ARG LIBVNPU_BUILD_IMAGE=ascendai/cann:9.0.0-devel
+ARG BASE_IMAGE=ubuntu:20.04
+FROM ${BASE_IMAGE} AS build
 
-FROM ${LIBVNPU_BUILD_IMAGE} AS libvnpu-builder
-
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --no-modify-path \
-    && chmod -R a+w ${RUSTUP_HOME} ${CARGO_HOME}
-ENV PATH="${CARGO_HOME}/bin:${PATH}"
-
-WORKDIR /build
-COPY hami-vnpu-core/ ./hami-vnpu-core/
-COPY deployments/container/dcmi_link_stub.c /tmp/dcmi_link_stub.c
-RUN mkdir -p /opt/ascend-driver-link-stub/lib64/driver && \
-    cc -shared -fPIC -Wl,-soname,libdcmi.so \
-        -o /opt/ascend-driver-link-stub/lib64/driver/libdcmi.so \
-        /tmp/dcmi_link_stub.c
-RUN if [ -f hami-vnpu-core/Cargo.toml ]; then \
-        cd hami-vnpu-core && \
-        ASCEND_DRIVER_HOME=/opt/ascend-driver-link-stub \
-        RUSTFLAGS="-L native=${ASCEND_TOOLKIT_HOME}/aarch64-linux/devlib \
-            -C link-arg=-Wl,-rpath-link,${ASCEND_TOOLKIT_HOME}/aarch64-linux/devlib \
-            -C link-arg=-Wl,--allow-shlib-undefined" \
-            cargo build --release; \
-    else \
-        echo "WARN: hami-vnpu-core submodule not present, skipping libvnpu build"; \
-    fi
-
-RUN mkdir -p /hami-vnpu-core-assets
-RUN if [ -f /build/hami-vnpu-core/target/release/libvnpu.so ]; then \
-        cp /build/hami-vnpu-core/target/release/libvnpu.so /hami-vnpu-core-assets && \
-        echo "/hami-vnpu-core/libvnpu.so" > /hami-vnpu-core-assets/ld.so.preload; \
-    fi
-
-FROM golang:${GOLANG_VERSION} AS build
-
+ARG GOLANG_VERSION=1.26.2
+ARG TARGETARCH
 ARG GOPROXY=https://proxy.golang.org,direct
-ENV GOPROXY=${GOPROXY}
+ARG VERSION=unknown
+ARG REVISION=unknown
+ARG BUILD_DATE=unknown
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    GOPATH=/go \
+    GOPROXY=${GOPROXY} \
+    PATH=/usr/local/go/bin:/go/bin:${PATH}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates gcc libc6-dev make wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && wget -qO /tmp/go.tgz "https://go.dev/dl/go${GOLANG_VERSION}.linux-${TARGETARCH}.tar.gz" \
+    && tar -C /usr/local -xzf /tmp/go.tgz \
+    && rm /tmp/go.tgz
 
 WORKDIR /build
 COPY . .
 
-RUN mkdir /artifacts
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    make PREFIX=/artifacts cmds
+    mkdir -p /artifacts && \
+    make PREFIX=/artifacts VERSION=${VERSION} REVISION=${REVISION} BUILD_DATE=${BUILD_DATE} cmds
 
 FROM ${BASE_IMAGE}
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl iputils-ping wget \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl iputils-ping wget \
     && rm -rf /var/lib/apt/lists/*
 
 LABEL io.k8s.display-name="Ascend NPU Resource Driver for Dynamic Resource Allocation (DRA)"
@@ -74,9 +53,11 @@ LABEL vendor="hami.io"
 ARG VERSION="N/A"
 LABEL version=${VERSION}
 ARG RELEASE="N/A"
-LABEL release="N/A"
+LABEL release=${RELEASE}
 LABEL summary="Ascend NPU DRA resource driver with HAMi libvnpu consumable capacity support"
 LABEL description="Resource driver for exposing and partitioning Ascend NPUs through Kubernetes DRA"
 
-COPY --from=libvnpu-builder /hami-vnpu-core-assets /usr/local/hami-vnpu-core-assets
+COPY dist/hami-vnpu-core/ /usr/local/hami-vnpu-core-assets/
 COPY --from=build /artifacts/ascend-dra-kubeletplugin /usr/bin/ascend-dra-kubeletplugin
+
+ENTRYPOINT ["/usr/bin/ascend-dra-kubeletplugin"]

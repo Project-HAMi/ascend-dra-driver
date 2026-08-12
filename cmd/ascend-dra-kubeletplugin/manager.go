@@ -81,18 +81,15 @@ func (am *AscendManager) GetChipMem() (int32, error) {
 	if len(logicIDs) < 1 {
 		return 0, fmt.Errorf("not found logicIDs")
 	}
-	for _, logicID := range logicIDs {
-		cgoVDevInfo, err := am.mgr.GetVirtualDeviceInfo(logicID)
-		if err != nil && strings.Contains(err.Error(), strconv.Itoa(common.DeviceNotSupport)) {
-			return common.DeviceNotSupport, nil
-		}
-		if err != nil {
-			// if not support found memory size, setting a default value
-			return 32, nil
-		}
-		return am.getMemorySize(cgoVDevInfo)
+	cgoVDevInfo, err := am.mgr.GetVirtualDeviceInfo(logicIDs[0])
+	if err != nil && strings.Contains(err.Error(), strconv.Itoa(common.DeviceNotSupport)) {
+		return common.DeviceNotSupport, nil
 	}
-	return 0, fmt.Errorf("not get memory size")
+	if err != nil {
+		// If querying the memory size is unsupported, use the historical default.
+		return 32, nil
+	}
+	return am.getMemorySize(cgoVDevInfo)
 }
 
 func (am *AscendManager) GetDeviceMemoryInfo(logicID int32) (*npuCommon.MemoryInfo, error) {
@@ -108,19 +105,15 @@ func (am *AscendManager) GetChipAICoreCount() (int32, error) {
 	if len(logicIDs) < 1 {
 		return 0, fmt.Errorf("not found logicIDs")
 	}
-	for _, logicID := range logicIDs {
-		cgoVDevInfo, err := am.mgr.GetVirtualDeviceInfo(logicID)
-		if err != nil && strings.Contains(err.Error(), strconv.Itoa(common.DeviceNotSupport)) {
-			return common.DeviceNotSupport, nil
-		}
-		if err != nil {
-			// if not support found aicore number, setting a default value
-
-			return common.DefaultAICoreNum, nil
-		}
-		return am.getAICoreCount(cgoVDevInfo)
+	cgoVDevInfo, err := am.mgr.GetVirtualDeviceInfo(logicIDs[0])
+	if err != nil && strings.Contains(err.Error(), strconv.Itoa(common.DeviceNotSupport)) {
+		return common.DeviceNotSupport, nil
 	}
-	return 0, fmt.Errorf("not get aicore count")
+	if err != nil {
+		// If querying the AI Core count is unsupported, use the historical default.
+		return common.DefaultAICoreNum, nil
+	}
+	return am.getAICoreCount(cgoVDevInfo)
 }
 
 func (am *AscendManager) getDavinciDev(logicID int32) (common.DavinciDev, error) {
@@ -217,7 +210,8 @@ func (am *AscendManager) NewHwDevManager() (common.NPUAllInfo, error) {
 		}
 		vDevInfos, err := am.getVirtualDevice(devList[i])
 		if err != nil {
-
+			am.assemblePhyDevices(chipType, davinciDev, &allDevices)
+			continue
 		}
 		if vDevInfos.TotalResource.VDevNum > common.MaxVirtualDeviceNum {
 			return common.NPUAllInfo{}, fmt.Errorf("invalid virtual device count")

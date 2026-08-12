@@ -1,0 +1,20 @@
+version: "2"
+
+linters:
+  enable:
+    - asciicheck
+    - misspell
+    - staticcheck
+  exclusions:
+    paths:
+      - third_party
+      - hami-vnpu-core
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    paths:
+      - third_party
+      - hami-vnpu-core

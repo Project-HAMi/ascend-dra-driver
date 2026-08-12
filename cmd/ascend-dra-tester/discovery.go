@@ -49,9 +49,9 @@ type RawDeviceInfo struct {
 
 // DiscoveredDevicesResult is the diagnostic output of the tester.
 type DiscoveredDevicesResult struct {
-	NodeName  string            `json:"nodeName"`
-	Timestamp time.Time         `json:"timestamp"`
-	Raw       []RawDeviceInfo   `json:"raw,omitempty"`
+	NodeName  string                     `json:"nodeName"`
+	Timestamp time.Time                  `json:"timestamp"`
+	Raw       []RawDeviceInfo            `json:"raw,omitempty"`
 	Slice     *resourceapi.ResourceSlice `json:"resourceSlice"`
 }
 
@@ -111,10 +111,10 @@ func DiscoverNPUDevices(nodeName string) (*DiscoveredDevicesResult, error) {
 		uuidStr := fmt.Sprintf("%s-%d", nodeName, dev.LogicID)
 
 		devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			driverDomain + "index": {IntValue: ptr.To(int64(dev.LogicID))},
-			driverDomain + "uuid":  {StringValue: ptr.To(uuidStr)},
-			driverDomain + "model": {StringValue: ptr.To(dev.DevType)},
-			driverDomain + "type":  {StringValue: ptr.To("NPU")},
+			driverDomain + "index":  {IntValue: ptr.To(int64(dev.LogicID))},
+			driverDomain + "uuid":   {StringValue: ptr.To(uuidStr)},
+			driverDomain + "model":  {StringValue: ptr.To(dev.DevType)},
+			driverDomain + "type":   {StringValue: ptr.To("NPU")},
 			driverDomain + "aicore": {IntValue: ptr.To(int64(aiCores))},
 			driverDomain + "memory": {IntValue: ptr.To(int64(mem))},
 		}
@@ -154,7 +154,7 @@ func DiscoverNPUDevices(nodeName string) (*DiscoveredDevicesResult, error) {
 			Kind:       "ResourceSlice",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        poolName,
+			Name: poolName,
 			Annotations: map[string]string{
 				"npu.project-hami.io/generated-by": "ascend-dra-tester",
 				"npu.project-hami.io/timestamp":    time.Now().UTC().Format(time.RFC3339),

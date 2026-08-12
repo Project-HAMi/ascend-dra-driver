@@ -32,6 +32,29 @@
 * 其他二进制依赖 参考： [.gitkeep](dev/tools/.gitkeep)
   - 注意环境是arm还是amd
 
+### CI/CD
+
+GitHub Actions 会在提交到 `main` 或创建面向 `main` 的 Pull Request 时执行 Go
+格式、依赖、静态检查和单元测试，并在 ARM runner 上构建 `libvnpu.so`，随后构建
+`linux/amd64`、`linux/arm64` 双架构驱动镜像。Pull Request 只构建镜像，不推送；
+`main` 和版本 tag 会将镜像推送到 Docker Hub。
+
+镜像发布默认使用 `projecthami/ascend-dra-driver`，可以通过仓库 Secret
+`IMAGE_NAME` 覆盖。推送镜像需要配置 `DOCKERHUB_TOKEN`（用户名）和
+`DOCKERHUB_PASSWD`（密码或 access token）。`CODECOV_TOKEN` 仅用于官方仓库的
+覆盖率上传。
+
+Helm chart 变更会触发独立的 lint。更新
+`deployments/helm/ascend-dra-driver/Chart.yaml` 中的 chart 版本后，发布工作流会把
+chart 发布到 GitHub Pages release 和 `ghcr.io/<owner>/charts/ascend-dra-driver`。
+
+本地构建镜像前，需要先在 ARM64 Ascend 构建环境中生成 libvnpu 产物：
+
+```bash
+make libvnpu-artifacts
+make image
+```
+
 ### 基础环境搭建
 
 首先克隆此仓库并进入目录。此演示中使用的所有脚本和示例Pod规范都包含在这里：
