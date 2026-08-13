@@ -97,6 +97,37 @@ require_boolean() {
   esac
 }
 
+wait_for_pod_log_pattern() {
+  local namespace=$1
+  local pod=$2
+  local pattern=$3
+  local output_file=$4
+  local max_attempts=${5:-60}
+  local retry_delay=${6:-1}
+  local temporary_file="${output_file}.tmp"
+  local attempt
+
+  [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] ||
+    fail "max_attempts must be a positive integer: ${max_attempts}"
+
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    if kubectl -n "${namespace}" logs "${pod}" > "${temporary_file}"; then
+      mv "${temporary_file}" "${output_file}"
+      if grep -Eq "${pattern}" "${output_file}"; then
+        cat "${output_file}"
+        return 0
+      fi
+    fi
+
+    if ((attempt < max_attempts)); then
+      sleep "${retry_delay}"
+    fi
+  done
+
+  [[ ! -f "${output_file}" ]] || cat "${output_file}" >&2
+  return 1
+}
+
 discover_davinci_device_nodes() {
   local device_root=${1:-/dev}
   local node

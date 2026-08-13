@@ -35,21 +35,10 @@ helm upgrade --install "${HELM_RELEASE}" \
 
 : > "${DEMO_STATE_DIR}/device-share.may-have-changed"
 
-kubectl -n "${DRIVER_NAMESPACE}" patch \
+kubectl -n "${DRIVER_NAMESPACE}" get \
   daemonset ascend-dra-driver-kubeletplugin \
-  --type=json \
-  -p='[
-    {
-      "op":"replace",
-      "path":"/spec/template/spec/containers/0/command",
-      "value":["/usr/bin/ascend-dra-kubeletplugin"]
-    },
-    {
-      "op":"add",
-      "path":"/spec/template/spec/containers/0/args",
-      "value":["--feature-gates=HAMivNPUCore=true"]
-    }
-  ]'
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="plugin")].args}' |
+  grep -F -- '--feature-gates=HAMivNPUCore=true'
 
 kubectl -n "${DRIVER_NAMESPACE}" rollout status \
   daemonset/ascend-dra-driver-kubeletplugin \

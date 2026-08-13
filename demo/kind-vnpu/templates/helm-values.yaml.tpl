@@ -4,6 +4,8 @@ image:
   tag: @@DRIVER_IMAGE_TAG@@
   pullPolicy: Never
 kubeletPlugin:
+  fullCardAndTraditionalVNPU:
+    enabled: false
   npuSmiHostPath: /usr/local/bin/npu-smi
   nodeSelector:
     npu.project-hami.io/e2e-node: "true"

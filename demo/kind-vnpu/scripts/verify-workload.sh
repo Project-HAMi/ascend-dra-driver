@@ -46,11 +46,15 @@ python3 "${CURRENT_DIR}/assert-claims.py" \
 section "Verify the two independent 1Gi libvnpu quotas"
 
 for pod in npu-share-a npu-share-b; do
-  kubectl -n "${TEST_NAMESPACE}" logs "${pod}" |
-    tee "${DEMO_STATE_DIR}/${pod}.log"
-  grep -Eq \
+  if ! wait_for_pod_log_pattern \
+    "${TEST_NAMESPACE}" \
+    "${pod}" \
     'set_device_ret=0 probe_ret=0 free=[0-9]+ total=1073741824' \
-    "${DEMO_STATE_DIR}/${pod}.log"
+    "${DEMO_STATE_DIR}/${pod}.log" \
+    60 \
+    1; then
+    fail "timed out waiting for the libvnpu quota probe from Pod ${pod}"
+  fi
 done
 
 section "Verify environment, preload, mounts, and device visibility"
