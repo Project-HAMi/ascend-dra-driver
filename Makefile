@@ -152,7 +152,19 @@ HELM_CHART_NAME := ascend-dra-driver
 
 verify-helm-chart:
 	helm lint --strict $(HELM_CHART_DIR)
-	helm template $(HELM_CHART_NAME) $(HELM_CHART_DIR) >/dev/null
+	@set -eu; \
+		rendered="$$(mktemp -d)"; \
+		trap 'rm -rf "$$rendered"' EXIT; \
+		helm template $(HELM_CHART_NAME) $(HELM_CHART_DIR) \
+			--namespace $(HELM_CHART_NAME) > "$$rendered/default.yaml"; \
+		grep -Fq -- 'command: ["/usr/bin/ascend-dra-kubeletplugin"]' "$$rendered/default.yaml"; \
+		grep -Fq -- '--feature-gates=HAMivNPUCore=true' "$$rendered/default.yaml"; \
+		helm template $(HELM_CHART_NAME) $(HELM_CHART_DIR) \
+			--namespace $(HELM_CHART_NAME) \
+			--set kubeletPlugin.fullCardAndTraditionalVNPU.enabled=true \
+			> "$$rendered/full-card-and-traditional-vnpu.yaml"; \
+		grep -Fq -- '--feature-gates=HAMivNPUCore=false' \
+			"$$rendered/full-card-and-traditional-vnpu.yaml"
 
 verify-helm-release-path:
 	@set -eu; \

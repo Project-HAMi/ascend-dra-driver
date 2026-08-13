@@ -15,3 +15,7 @@
 {{- $error = printf "%s\nSee: https://helm.sh/docs/helm/helm_install/#options" $error }}
 {{- fail $error }}
 {{- end }}
+
+{{- if not (kindIs "bool" .Values.kubeletPlugin.fullCardAndTraditionalVNPU.enabled) }}
+{{- fail "kubeletPlugin.fullCardAndTraditionalVNPU.enabled must be a boolean" }}
+{{- end }}

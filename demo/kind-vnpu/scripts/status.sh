@@ -7,8 +7,13 @@ CURRENT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)
 source "${CURRENT_DIR}/common.sh"
 
 section "Demo state"
-printf 'state_dir=%s\ncluster=%s\ndriver_image=%s\n' \
-  "${DEMO_STATE_DIR}" "${KIND_CLUSTER_NAME}" "${DRIVER_IMAGE}"
+printf 'config=%s\nstate_dir=%s\ncluster=%s\nkind_cgroup_mode=%s\nkind_resolved_cgroup_mode=%s\nkind_image=%s\ndriver_image=%s\n' \
+  "${DEMO_ENV_FILE}" "${DEMO_STATE_DIR}" "${KIND_CLUSTER_NAME}" "${KIND_CGROUP_MODE}" \
+  "${KIND_RESOLVED_CGROUP_MODE:-unresolved}" \
+  "${KIND_CLUSTER_IMAGE:-unresolved}" "${DRIVER_IMAGE}"
+printf 'davinci_device_nodes:\n%s\n' "${DAVINCI_DEVICE_NODES:-not-discovered}"
+printf 'skip_existing_image_builds=%s\n' "${SKIP_EXISTING_IMAGE_BUILDS}"
+printf 'workload_image=%s\n' "${WORKLOAD_IMAGE}"
 
 if ! cluster_exists; then
   warn "Kind cluster ${KIND_CLUSTER_NAME} does not exist"

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -41,9 +42,10 @@ type (
 )
 
 const (
-	defaultLibvNPUHostPath         = "/usr/local/hami-vnpu-core"
-	libvNPULocalShmemContainerPath = "/hami-vnpu-shmem"
-	libvNPULocalShmemFileName      = "vnpu_local_shmem"
+	defaultLibvNPUHostPath                                   = "/usr/local/hami-vnpu-core"
+	libvNPULocalShmemContainerPath                           = "/hami-vnpu-shmem"
+	libvNPULocalShmemFileName                                = "vnpu_local_shmem"
+	physicalIDAttributeName        resourceapi.QualifiedName = DriverDomain + "physicalID"
 )
 
 type OpaqueDeviceConfig struct {
@@ -72,6 +74,7 @@ type PhysicalNPUState struct {
 	DeviceName       string
 	PhysicalDeviceID string
 	LogicID          int32
+	PhyID            int32
 	ModelName        string
 	AvailableSlices  []*VNPUSlice
 	AllocatedSlices  []*VNPUSlice
@@ -463,7 +466,10 @@ func (s *DeviceState) applyConfig(
 	}
 
 	for _, result := range results {
-		envs := buildBaseEnv(result.Device)
+		envs, err := s.buildBaseEnv(result.Device)
+		if err != nil {
+			return nil, err
+		}
 		if s.vnpuManager != nil {
 			envs = s.addVNPUEnvIfSlice(envs, result.Device)
 		}
@@ -488,7 +494,7 @@ func (s *DeviceState) applyLibvNPUConfig(
 
 	allocatedDeviceIDs := make([]string, 0, len(results))
 	for _, result := range results {
-		deviceID, err := visibleDeviceID(result.Device)
+		deviceID, err := s.visibleDeviceID(result.Device)
 		if err != nil {
 			return perDeviceEdits, err
 		}
@@ -537,12 +543,19 @@ func (s *DeviceState) applyLibvNPUConfig(
 	return perDeviceEdits, nil
 }
 
-func visibleDeviceID(deviceName string) (string, error) {
-	dn, err := npuutil.ParseDeviceName(deviceName)
-	if err != nil {
-		return "", fmt.Errorf("invalid NPU device name %q: %w", deviceName, err)
+func (s *DeviceState) visibleDeviceID(deviceName string) (string, error) {
+	device, ok := s.allocatable[deviceName]
+	if !ok {
+		return "", fmt.Errorf("NPU device %q is not allocatable", deviceName)
 	}
-	return dn.VisibleDevice(), nil
+	physicalID, ok := device.Attributes[physicalIDAttributeName]
+	if !ok || physicalID.IntValue == nil {
+		return "", fmt.Errorf("NPU device %q is missing physical ID attribute %q", deviceName, physicalIDAttributeName)
+	}
+	if *physicalID.IntValue < 0 {
+		return "", fmt.Errorf("NPU device %q has invalid physical ID %d", deviceName, *physicalID.IntValue)
+	}
+	return strconv.FormatInt(*physicalID.IntValue, 10), nil
 }
 
 func (s *DeviceState) libvNPUCapacityValue(
@@ -697,16 +710,15 @@ func mergeContainerEdits(dst, src *cdispec.ContainerEdits) {
 	dst.Mounts = append(dst.Mounts, src.Mounts...)
 }
 
-// buildBaseEnv constructs basic environment variables such as ASCEND_VISIBLE_DEVICES
-func buildBaseEnv(deviceName string) []string {
-	dn, err := npuutil.ParseDeviceName(deviceName)
+// buildBaseEnv constructs basic environment variables such as ASCEND_VISIBLE_DEVICES.
+func (s *DeviceState) buildBaseEnv(deviceName string) ([]string, error) {
+	physicalID, err := s.visibleDeviceID(deviceName)
 	if err != nil {
-		log.Printf("Warning: invalid NPU device name %q: %v", deviceName, err)
-		return nil
+		return nil, err
 	}
 	return []string{
-		fmt.Sprintf("ASCEND_VISIBLE_DEVICES=%s", dn.VisibleDevice()),
-	}
+		fmt.Sprintf("ASCEND_VISIBLE_DEVICES=%s", physicalID),
+	}, nil
 }
 
 // addVNPUEnvIfSlice adds ASCEND_VNPU_SPECS if it is a slice format npu-x-y.
@@ -1099,10 +1111,11 @@ func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *Ph
 	uuidStr := fmt.Sprintf("%s-%d", os.Getenv("NODE_NAME"), physicalNpu.LogicID)
 
 	devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-		DriverDomain + "index": {IntValue: ptr.To(int64(physicalNpu.LogicID))},
-		DriverDomain + "uuid":  {StringValue: ptr.To(uuidStr)},
-		DriverDomain + "model": {StringValue: ptr.To(physicalNpu.ModelName)},
-		DriverDomain + "type":  {StringValue: ptr.To(sliceType)},
+		DriverDomain + "index":  {IntValue: ptr.To(int64(physicalNpu.LogicID))},
+		physicalIDAttributeName: {IntValue: ptr.To(int64(physicalNpu.PhyID))},
+		DriverDomain + "uuid":   {StringValue: ptr.To(uuidStr)},
+		DriverDomain + "model":  {StringValue: ptr.To(physicalNpu.ModelName)},
+		DriverDomain + "type":   {StringValue: ptr.To(sliceType)},
 	}
 
 	if s.vnpuManager != nil {

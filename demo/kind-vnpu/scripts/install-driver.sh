@@ -10,7 +10,7 @@ cluster_exists || fail "Kind cluster ${KIND_CLUSTER_NAME} does not exist"
 docker image inspect "${DRIVER_IMAGE}" >/dev/null 2>&1 ||
   fail "driver image does not exist: ${DRIVER_IMAGE}"
 
-section "Load the driver image into the Kind worker"
+section "Load the DRA driver image into the Kind worker"
 
 "${KIND_BIN}" load docker-image "${DRIVER_IMAGE}" \
   --name "${KIND_CLUSTER_NAME}" \
@@ -35,21 +35,10 @@ helm upgrade --install "${HELM_RELEASE}" \
 
 : > "${DEMO_STATE_DIR}/device-share.may-have-changed"
 
-kubectl -n "${DRIVER_NAMESPACE}" patch \
+kubectl -n "${DRIVER_NAMESPACE}" get \
   daemonset ascend-dra-driver-kubeletplugin \
-  --type=json \
-  -p='[
-    {
-      "op":"replace",
-      "path":"/spec/template/spec/containers/0/command",
-      "value":["/usr/bin/ascend-dra-kubeletplugin"]
-    },
-    {
-      "op":"add",
-      "path":"/spec/template/spec/containers/0/args",
-      "value":["--feature-gates=HAMivNPUCore=true"]
-    }
-  ]'
+  -o jsonpath='{.spec.template.spec.containers[?(@.name=="plugin")].args}' |
+  grep -F -- '--feature-gates=HAMivNPUCore=true'
 
 kubectl -n "${DRIVER_NAMESPACE}" rollout status \
   daemonset/ascend-dra-driver-kubeletplugin \

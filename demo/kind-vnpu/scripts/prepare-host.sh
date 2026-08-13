@@ -55,9 +55,31 @@ docker network ls --format '{{.ID}} {{.Name}}' |
 docker info \
   --format 'default_runtime={{.DefaultRuntime}} cgroup_driver={{.CgroupDriver}} cgroup_version={{.CgroupVersion}}' \
   > "${DEMO_STATE_DIR}/docker-info.before"
+DOCKER_CGROUP_DRIVER="$(docker info --format '{{.CgroupDriver}}')"
+DOCKER_CGROUP_VERSION="$(docker info --format '{{.CgroupVersion}}')"
+requested_kind_cgroup_mode="${KIND_CGROUP_MODE}"
+KIND_RESOLVED_CGROUP_MODE="$(
+  resolve_kind_cgroup_mode \
+    "${requested_kind_cgroup_mode}" \
+    "${DOCKER_CGROUP_VERSION}"
+)"
+select_kind_cluster_image
 : > "${DEMO_STATE_DIR}/demo-images.expected"
 : > "${DEMO_STATE_DIR}/kind-container-ids.expected"
 rm -f "${DEMO_STATE_DIR}/device-share.may-have-changed"
+
+if [[ "${requested_kind_cgroup_mode}" == "auto" ]]; then
+  if [[ "${KIND_RESOLVED_CGROUP_MODE}" == "cgroupfs" ]]; then
+    warn "Docker uses cgroup v1; the demo will use the cgroupfs-compatible Kind image"
+  else
+    success "Docker uses cgroup v2; the demo will use the standard Kind image"
+  fi
+else
+  warn "KIND_CGROUP_MODE=${requested_kind_cgroup_mode} overrides automatic cgroup selection"
+fi
+printf 'Kind cgroup mode: %s (Docker driver=%s, version=%s)\n' \
+  "${KIND_RESOLVED_CGROUP_MODE}" "${DOCKER_CGROUP_DRIVER}" "${DOCKER_CGROUP_VERSION}"
+printf 'Kind cluster image: %s\n' "${KIND_CLUSTER_IMAGE}"
 
 section "Check the ARM64 Ascend host"
 
@@ -73,8 +95,15 @@ require_file /etc/ascend-docker-runtime.d/base.list
 [[ -x /usr/local/Ascend/Ascend-Docker-Runtime/ascend-docker-hook ]] ||
   fail "ascend-docker-hook is missing"
 
-require_character_device /dev/davinci0
-require_character_device /dev/davinci1
+DAVINCI_DEVICE_NODES="$(discover_davinci_device_nodes /dev)"
+davinci_device_count="$(
+  printf '%s\n' "${DAVINCI_DEVICE_NODES}" |
+    awk 'NF { count++ } END { print count + 0 }'
+)"
+[[ "${davinci_device_count}" -ge 2 ]] ||
+  fail "the two-card demo requires at least two davinci device nodes; found ${davinci_device_count}"
+printf 'Discovered davinci device nodes:\n%s\n' "${DAVINCI_DEVICE_NODES}"
+
 require_character_device /dev/davinci_manager
 require_character_device /dev/devmm_svm
 require_character_device /dev/hisi_hdc

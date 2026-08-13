@@ -46,6 +46,14 @@ controller:
 
 kubeletPlugin:
   priorityClassName: "system-node-critical"
+  # HAMivNPUCore consumable-capacity sharing is the default and currently
+  # validated allocation mode.
+  #
+  # Full-card and traditional vNPU allocation are still under development and
+  # testing. Set enabled=true only for explicit development and validation of
+  # those modes. This disables the HAMivNPUCore feature gate.
+  fullCardAndTraditionalVNPU:
+    enabled: false
   # Optional host path for npu-smi when it is not available below the
   # /usr/local/Ascend mount. HAMivNPUCore startup requires npu-smi.
   npuSmiHostPath: ""

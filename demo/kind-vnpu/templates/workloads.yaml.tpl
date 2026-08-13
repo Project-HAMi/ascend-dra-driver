@@ -1,21 +1,3 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: @@TEST_NAMESPACE@@
----
-apiVersion: resource.k8s.io/v1
-kind: DeviceClass
-metadata:
-  name: ascend-vnpu-same-device-e2e
-spec:
-  selectors:
-    - cel:
-        expression: >-
-          device.driver == "npu.project-hami.io" &&
-          device.allowMultipleAllocations == true &&
-          device.attributes["npu.project-hami.io"].type == "NPU" &&
-          device.attributes["npu.project-hami.io"].index == 0
----
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:
@@ -46,11 +28,15 @@ spec:
         exactly:
           deviceClassName: ascend-vnpu-same-device-e2e
           allocationMode: ExactCount
-          count: 1
+          count: 2
           capacity:
             requests:
               npu.project-hami.io/memory: 1Gi
               npu.project-hami.io/aicore: 50
+    constraints:
+      - requests:
+          - npu
+        distinctAttribute: npu.project-hami.io/index
 ---
 apiVersion: v1
 kind: Pod
@@ -64,7 +50,7 @@ spec:
     npu.project-hami.io/e2e-node: "true"
   containers:
     - name: workload
-      image: @@DRIVER_IMAGE@@
+      image: @@WORKLOAD_IMAGE@@
       imagePullPolicy: Never
       command: ["/bin/bash", "-c"]
       args:
@@ -120,7 +106,7 @@ spec:
     npu.project-hami.io/e2e-node: "true"
   containers:
     - name: workload
-      image: @@DRIVER_IMAGE@@
+      image: @@WORKLOAD_IMAGE@@
       imagePullPolicy: Never
       command: ["/bin/bash", "-c"]
       args:
