@@ -135,7 +135,7 @@ func parseTemplateInfo(output string, templates map[string]*VNPUTemplate) error 
 }
 
 // InitPhysicalNPU initializes a physical NPU, using the entire card as a default available slice.
-func (m *VNPUManager) InitPhysicalNPU(deviceName string, logicID int32, modelName string) {
+func (m *VNPUManager) InitPhysicalNPU(deviceName string, logicID, phyID int32, modelName string) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -144,12 +144,13 @@ func (m *VNPUManager) InitPhysicalNPU(deviceName string, logicID int32, modelNam
 		return
 	}
 
-	physicalDeviceID := fmt.Sprintf("%s%d", consts.NPUPrefix, logicID)
+	physicalDeviceID := fmt.Sprintf("%s%d", consts.NPUPrefix, phyID)
 
 	npu := &PhysicalNPUState{
 		DeviceName:       deviceName,
 		PhysicalDeviceID: physicalDeviceID,
 		LogicID:          logicID,
+		PhyID:            phyID,
 		ModelName:        modelName,
 		AvailableSlices:  []*VNPUSlice{},
 		AllocatedSlices:  []*VNPUSlice{},

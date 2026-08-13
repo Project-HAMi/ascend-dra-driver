@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/Project-HAMi/hami-dra-driver/pkg/common"
 
@@ -141,6 +142,22 @@ func TestNewHwDevManagerPhysicalDevice(t *testing.T) {
 	assert.Len(t, info.AllDevs, 1)
 	assert.Equal(t, "Ascend910A-0", info.AllDevs[0].DeviceName)
 	assert.Equal(t, "Ascend910A", info.AllDevs[0].DevType)
+}
+
+func TestEnumerateDevicesPublishesDiscoveredPhysicalID(t *testing.T) {
+	am := newStubManager()
+	stub := am.mgr.(*stubDeviceManager)
+	stub.deviceList = []int32{0, 1}
+	stub.physicIDMap = map[int32]int32{0: 0, 1: 2}
+	stub.chipMap[1] = &npuCommon.ChipInfo{Name: "Ascend910A"}
+
+	devices, err := enumerateDevices(am, nil, "test-node")
+	require.NoError(t, err)
+	require.Contains(t, devices, "npu-1-0")
+	physicalID, ok := devices["npu-1-0"].Attributes[physicalIDAttributeName]
+	require.True(t, ok)
+	require.NotNil(t, physicalID.IntValue)
+	assert.Equal(t, int64(2), *physicalID.IntValue)
 }
 
 func TestNewHwDevManagerVirtualDevice(t *testing.T) {

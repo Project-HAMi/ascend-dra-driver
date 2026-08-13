@@ -132,17 +132,18 @@ func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName str
 		uuidStr := fmt.Sprintf("%s-%d", nodeName, dev.LogicID)
 
 		devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			DriverDomain + "index": {IntValue: ptr.To(int64(dev.LogicID))},
-			DriverDomain + "uuid":  {StringValue: ptr.To(uuidStr)},
-			DriverDomain + "model": {StringValue: ptr.To(dev.DevType)},
-			DriverDomain + "type":  {StringValue: ptr.To("NPU")},
+			DriverDomain + "index":  {IntValue: ptr.To(int64(dev.LogicID))},
+			physicalIDAttributeName: {IntValue: ptr.To(int64(dev.PhyID))},
+			DriverDomain + "uuid":   {StringValue: ptr.To(uuidStr)},
+			DriverDomain + "model":  {StringValue: ptr.To(dev.DevType)},
+			DriverDomain + "type":   {StringValue: ptr.To("NPU")},
 		}
 
 		var capacities map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
 		if featuregates.Enabled(featuregates.HAMivNPUCore) {
 			capacities = buildLibvNPUDeviceCapacities(mgr, dev.LogicID)
 		} else if vnpuManager != nil {
-			vnpuManager.InitPhysicalNPU(deviceName, dev.LogicID, dev.DevType)
+			vnpuManager.InitPhysicalNPU(deviceName, dev.LogicID, dev.PhyID, dev.DevType)
 			maxAICore, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
 			devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
 			devAttributes[DriverDomain+"memory"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}

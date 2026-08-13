@@ -33,6 +33,7 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
 	"k8s.io/kubernetes/pkg/kubelet/checkpointmanager"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 	cdispec "tags.cncf.io/container-device-interface/specs-go"
 
@@ -59,6 +60,11 @@ func TestMockDRALibvNPULifecycle(t *testing.T) {
 	published := publishedDevices(t, publisher.lastPublished(t))
 	require.Len(t, published, 1)
 	assert.Equal(t, "npu-0-0", published[0].Name)
+	require.Contains(t, published[0].Attributes, physicalIDAttributeName)
+	assert.Equal(t, int64(0), ptr.Deref(
+		published[0].Attributes[physicalIDAttributeName].IntValue,
+		int64(-1),
+	))
 	require.NotNil(t, published[0].AllowMultipleAllocations)
 	assert.True(t, *published[0].AllowMultipleAllocations)
 	require.Contains(t, published[0].Capacity, resourceapi.QualifiedName(DriverDomain+"memory"))
@@ -105,6 +111,16 @@ func TestMockDRALibvNPUTwoDeviceLifecycle(t *testing.T) {
 
 	secondDevice := driver.state.allocatable["npu-0-0"]
 	secondDevice.Name = "npu-1-0"
+	secondDevice.Attributes = make(map[resourceapi.QualifiedName]resourceapi.DeviceAttribute, len(secondDevice.Attributes))
+	for name, attribute := range driver.state.allocatable["npu-0-0"].Attributes {
+		secondDevice.Attributes[name] = attribute
+	}
+	secondDevice.Attributes[resourceapi.QualifiedName(DriverDomain+"index")] = resourceapi.DeviceAttribute{
+		IntValue: ptr.To(int64(1)),
+	}
+	secondDevice.Attributes[physicalIDAttributeName] = resourceapi.DeviceAttribute{
+		IntValue: ptr.To(int64(2)),
+	}
 	driver.state.allocatable[secondDevice.Name] = secondDevice
 	driver.syncAllocatable()
 	assert.ElementsMatch(t, []string{"npu-0-0", "npu-1-0"}, publishedDeviceNames(t, publisher.lastPublished(t)))
@@ -133,7 +149,7 @@ func TestMockDRALibvNPUTwoDeviceLifecycle(t *testing.T) {
 	require.Len(t, spec.Devices, 1)
 	edits := spec.Devices[0].ContainerEdits
 	assert.ElementsMatch(t, []string{
-		"ASCEND_VISIBLE_DEVICES=0,1",
+		"ASCEND_VISIBLE_DEVICES=0,2",
 		"NPU_MEM_QUOTA=1024",
 		"NPU_PRIORITY=50",
 		"NPU_GLOBAL_SHM_PATH=/hami-shared-region/0_global_registry",
