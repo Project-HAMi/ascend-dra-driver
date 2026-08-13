@@ -1,206 +1,180 @@
-# 昇腾DRA驱动
+# Ascend DRA Driver
 
-本仓库包含用于Kubernetes [动态资源分配(DRA)](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)功能的示例资源驱动。
+## Overview
 
-本项目旨在展示如何构建DRA资源驱动并将其封装在[helm chart](https://helm.sh/)中的最佳实践。它可以作为实现您自己资源集驱动的起点。
+The Ascend DRA Driver exposes Huawei Ascend NPUs through Kubernetes [Dynamic Resource Allocation (DRA)](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/).
 
-## 里程碑
-- [x] 支持NPU整卡分配
-- [x] 支持vNPU动态分配（vNPU分配后重新计算剩余设备，并更新device列表）
-- [x] 整理代码文件中的K8s定义，GPU->NPU
-- [ ] 实现多节点多卡调度分配
-- [ ] 实现基本故障处理
-- [ ] 实现基本运行时动态分配（可行性分析）
-- [ ] 实现全面故障处理
+The kubelet plugin discovers physical NPUs and existing vNPUs, publishes them as `ResourceSlice` objects, and handles the DRA Prepare and Unprepare lifecycle. It generates CDI specifications for allocated devices and persists prepared claims in a checkpoint.
 
-## 快速开始和演示
+The currently validated allocation mode is **HAMivNPUCore sharing**. The alpha `HAMivNPUCore` feature gate publishes shareable `memory` and `aicore` capacity. CDI injects libvnpu so multiple claims can consume isolated capacity on the same physical NPU.
 
-在深入了解该示例驱动程序构建细节之前，通过快速演示了解其运行情况是很有用的。
+**Full-card and traditional vNPU allocation are still under development and testing. They are not currently claimed as supported or ready for production use. These modes will be documented and released after their implementation and end-to-end validation are complete.**
 
-驱动本身提供对一组NPU设备的访问，本演示将介绍构建和安装驱动程序，然后运行消耗这些NPU的工作负载的过程。
+The driver name is `npu.project-hami.io`.
 
-以下步骤已在Linux上测试并验证。
+## Installation
 
-### 前置条件
+### Prerequisites
 
-* [GNU Make 3.81+](https://www.gnu.org/software/make/)
-* [GNU Tar 1.34+](https://www.gnu.org/software/tar/)
-* [docker v20.10+ (包括buildx)](https://docs.docker.com/engine/install/) 或 [Podman v4.9+](https://podman.io/docs/installation)
-* [minikube v1.32.0+](https://minikube.sigs.k8s.io/docs/start/)
-* [helm v3.7.0+](https://helm.sh/docs/intro/install/)
-* [kubectl v1.18+](https://kubernetes.io/docs/reference/kubectl/)
-* 其他二进制依赖 参考： [.gitkeep](dev/tools/.gitkeep)
-  - 注意环境是arm还是amd
+An Ascend node requires:
 
-### CI/CD
+- A Linux node with supported Huawei Ascend hardware.
+- Ascend Driver, DCMI, `npu-smi`, and Ascend Docker Runtime.
+- A container runtime with CDI enabled.
+- Kubernetes with the DRA APIs and feature gates required by the selected allocation mode.
+- Kubernetes 1.34 or later for the included HAMivNPUCore consumable-capacity demo.
+- Helm 3, kubectl, Docker, GNU Make, and Go 1.26 for building and deployment.
 
-GitHub Actions 会在提交到 `main` 或创建面向 `main` 的 Pull Request 时执行 Go
-格式、依赖、静态检查和单元测试，并在 ARM runner 上构建 `libvnpu.so`，随后构建
-`linux/amd64`、`linux/arm64` 双架构驱动镜像。Pull Request 只构建镜像，不推送；
-`main` 和版本 tag 会将镜像推送到 Docker Hub。
+The Helm chart is located at [`deployments/helm/ascend-dra-driver`](deployments/helm/ascend-dra-driver). The recommended validated installation path is the [Kind HAMivNPUCore demo](demo/kind-vnpu/README.md), which prepares the Ascend runtime, installs the chart, and verifies the complete DRA lifecycle.
 
-镜像发布默认使用 `projecthami/ascend-dra-driver`，可以通过仓库 Secret
-`IMAGE_NAME` 覆盖。推送镜像需要配置 `DOCKERHUB_TOKEN`（用户名）和
-`DOCKERHUB_PASSWD`（密码或 access token）。`CODECOV_TOKEN` 仅用于官方仓库的
-覆盖率上传。
+The chart enables HAMivNPUCore by default. Full-card and traditional vNPU allocation must be explicitly enabled for development or testing:
 
-Helm chart 变更会触发独立的 lint。更新
-`deployments/helm/ascend-dra-driver/Chart.yaml` 中的 chart 版本后，发布工作流会把
-chart 发布到 GitHub Pages release 和 `ghcr.io/<owner>/charts/ascend-dra-driver`。
+```bash
+helm upgrade --install ascend-dra-driver \
+  deployments/helm/ascend-dra-driver \
+  --namespace ascend-dra-driver \
+  --create-namespace \
+  --set kubeletPlugin.fullCardAndTraditionalVNPU.enabled=true
+```
 
-本地构建镜像前，需要先在 ARM64 Ascend 构建环境中生成 libvnpu 产物：
+This opt-in setting disables the `HAMivNPUCore` feature gate. These modes are not currently claimed as supported or production-ready.
+
+### Ascend Driver and CANN Compatibility
+
+HAMi-vNPU-core does not currently enforce a numeric minimum Ascend Kernel Driver version. Its compatibility requirement is ABI-based:
+
+- `libvnpu.so` links to the host-provided `libdcmi.so` and `libruntime.so`.
+- The DCMI library must export `dcmi_init`, `dcmi_get_card_list`, and `dcmi_get_device_resource_info`.
+- The CANN Runtime must provide the `rt*` APIs intercepted or called by libvnpu, including stream, event, device, kernel-launch, and memory-management APIs.
+- The CANN development libraries used to build libvnpu, the CANN userspace in the workload image, and the host Ascend HDK/Driver must be mutually compatible.
+
+There is therefore no supported universal rule such as "Driver >= X" in this repository. Select the Ascend HDK/Driver version from Huawei's compatibility matrix for the exact CANN release used by the workload. For example, see the official [CANN 9.0.0 release notes and driver mapping](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/900/releasenote/release-notes.md).
+
+The current Kind demo has been validated on Ascend 310P3 with Ascend Driver/DCMI `25.5.1` and the `ascendai/cann:9.0.0-devel` image. This is a tested combination, not a minimum-version guarantee.
+
+Check a host before deployment with:
+
+```bash
+npu-smi info
+cat /usr/local/Ascend/driver/version.info
+
+# The exact paths may differ for a non-default Ascend installation.
+nm -D /usr/local/Ascend/driver/lib64/driver/libdcmi.so | \
+  grep -E 'dcmi_(init|get_card_list|get_device_resource_info)'
+```
+
+A missing `libdcmi.so`/`libruntime.so` or required symbol can prevent `libvnpu.so` from loading or fail when an intercepted API is first called. The driver currently does not provide forward or backward compatibility for such missing ABI symbols.
+
+### Build from Source
+
+Initialize the submodules first:
+
+```bash
+git clone --recurse-submodules https://github.com/4pdOss/hami-dra-driver.git
+cd hami-dra-driver
+```
+
+Run the Go checks:
+
+```bash
+make test
+```
+
+The image expects prebuilt libvnpu assets under `dist/hami-vnpu-core`. Build them in an environment that provides the required Ascend development libraries, then build the driver image:
 
 ```bash
 make libvnpu-artifacts
 make image
 ```
 
-### 基础环境搭建
+The default image repository is `projecthami/ascend-dra-driver`. Override `IMAGE_NAME`, `VERSION`, `BASE_IMAGE`, or `GOPROXY` when required:
 
-首先克隆此仓库并进入目录。此演示中使用的所有脚本和示例Pod规范都包含在这里：
-```
-git clone https://github.com/4pdOss/hami-dra-driver.git
-cd hami-dra-driver
-```
-
-1. 创建minikube单机集群：
 ```bash
-./demo/create-cluster.sh
+make image \
+  IMAGE_NAME=example.com/ascend-dra-driver \
+  VERSION=0.1.0 \
+  BASE_IMAGE=ubuntu:20.04
 ```
 
-集群创建成功后，仔细检查一切是否按预期启动：
-```console
-$ kubectl get pod -A
-NAMESPACE            NAME                                                              READY   STATUS    RESTARTS   AGE
-kube-system          coredns-5d78c9869d-6jrx9                                          1/1     Running   0          1m
-kube-system          coredns-5d78c9869d-dpr8p                                          1/1     Running   0          1m
-kube-system          etcd-ascend-dra-driver-cluster-control-plane                      1/1     Running   0          1m
-kube-system          kube-apiserver-ascend-dra-driver-cluster-control-plane            1/1     Running   0          1m
-kube-system          kube-controller-manager-ascend-dra-driver-cluster-control-plane   1/1     Running   0          1m
-kube-system          kube-proxy-kgz4z                                                  1/1     Running   0          1m
-kube-system          kube-proxy-x6fnd                                                  1/1     Running   0          1m
-kube-system          kube-scheduler-ascend-dra-driver-cluster-control-plane            1/1     Running   0          1m
-local-path-storage   local-path-provisioner-7dbf974f64-9jmc7                           1/1     Running   0          1m
-```
+## Demo
 
-2. 编译和安装DRA驱动程序：
+The recommended demo creates a Kubernetes 1.34 Kind cluster on an ARM64 Ascend host and validates both one-device and two-device ResourceClaims.
+
+Configure the physical card IDs in [`demo/kind-vnpu/demo.env`](demo/kind-vnpu/demo.env), then run:
+
 ```bash
-# 构建驱动镜像
-./demo/build-driver.sh
-
-# 安装驱动到集群
-./demo/install-dra-driver.sh
+cd demo/kind-vnpu
+./demo.sh all
 ```
 
-检查驱动程序组件是否已成功启动：
-```console
-$ kubectl get pod -n ascend-dra-driver
-NAME                                             READY   STATUS    RESTARTS   AGE
-ascend-dra-driver-kubeletplugin-qwmbl           1/1     Running   0          1m
-```
+For an interactive run that retains the environment for inspection:
 
-并显示工作节点上可用NPU设备的初始状态：
-```
-$ kubectl get resourceslice -o yaml
-```
-
-### 功能测试
-
-接下来，部署五个示例应用程序，演示如何以各种方式使用`ResourceClaim`、`ResourceClaimTemplate`和自定义`NpuConfig`对象来选择和配置资源：
 ```bash
-kubectl apply --filename=demo/npu-test{1,2,3,4,5}.yaml
-```
-**注意**：您需要使用华为NPU环境做上述测试
-
-并验证它们是否成功启动：
-```console
-$ kubectl get pod -A
-NAMESPACE   NAME   READY   STATUS              RESTARTS   AGE
-...
-npu-test1   pod0   0/1     Pending             0          2s
-npu-test1   pod1   0/1     Pending             0          2s
-npu-test2   pod0   0/2     Pending             0          2s
-npu-test3   pod0   0/1     ContainerCreating   0          2s
-npu-test3   pod1   0/1     ContainerCreating   0          2s
-npu-test4   pod0   0/1     Pending             0          2s
-npu-test5   pod0   0/4     Pending             0          2s
-...
+./demo.sh setup
+./demo.sh prepare
+./demo.sh verify
+./demo.sh status
 ```
 
-使用您喜欢的编辑器查看每个`npu-test{1,2,3,4,5}.yaml`文件，了解它们的功能。
+Clean up when finished:
 
-在这个示例资源驱动程序中，在每个容器中设置了一组环境变量，以指示真实资源驱动程序*会*注入哪些NPU以及它们*会*如何配置。
-
-您可以使用这些环境变量中设置的NPU ID以及NPU共享设置来验证它们是否以与图中所示语义一致的方式分发。
-
-验证一切正常运行后，删除所有示例应用程序：
 ```bash
-kubectl delete --wait=false --filename=demo/npu-test{1,2,3,4,5}.yaml
+./demo.sh unprepare
+./demo.sh cleanup
 ```
 
-### 开发和调试环境
+See the [demo documentation](demo/kind-vnpu/README.md) for prerequisites, configuration, command semantics, and troubleshooting.
 
-如果您需要进行开发和调试，可以按照以下步骤设置环境：
+## ResourceClaim Example
 
-1. 编译并启动开发版dra驱动
+The following claim requests two different Ascend NPU devices. Each allocation consumes 1 GiB of memory and 50 AI cores:
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: two-ascend-npus
+spec:
+  devices:
+    requests:
+      - name: npu
+        exactly:
+          deviceClassName: ascend-vnpu
+          allocationMode: ExactCount
+          count: 2
+          capacity:
+            requests:
+              npu.project-hami.io/memory: 1Gi
+              npu.project-hami.io/aicore: 50
+    constraints:
+      - requests:
+          - npu
+        distinctAttribute: npu.project-hami.io/index
+```
+
+The DeviceClass name depends on the deployed configuration. The Kind demo creates its own demo-specific DeviceClass.
+
+## Development
+
+Useful commands include:
+
 ```bash
-# 编译dra驱动
-cd ./dev/dra
-./build_dra.sh
-
-# 同步开发编译版dra驱动及调试工具到dra驱动容器
-./all_cp.sh
-
-# 进入dra驱动容器
-./pod_into_dra.sh
-
-# 进入/root目录
-cd
-
-# 启动调试
-./start_debug.sh
-
-# 在本地开发环境使用远程调试配置连接
-# zjknps.jieshi.space:9341
+make assert-fmt
+make vet
+go test ./...
+go test ./cmd/ascend-dra-kubeletplugin \
+  -run 'TestMockDRA|TestMockDRALibvNPU' -v
+make verify-helm-chart
 ```
 
-2. （可选）替换k8s组件，以调度器为案例。 参考： [K8s远程调试，你的姿势对了吗？](https://cloud.tencent.com/developer/article/1624638)
-```bash
-# 复制调试工具及可调试版本二进制
-cd ./dev/node
-./all_cp.sh
+The `ascend-dra-tester` command can enumerate devices and render discovered resources without starting the kubelet plugin. This is useful for checking a real Ascend host before cluster deployment.
 
-# 进入主node节点
-./pod_into_node.sh
+## Contributing
 
-# 进入/root路径
-cd 
+Contributions are welcome. Please include tests for device discovery, published resources, Prepare and Unprepare behavior, CDI edits, checkpoint state, and error cleanup when changing the allocation lifecycle.
 
-# 禁用默认调度器实例
-./disable_schedule.sh
+Contributions to Project HAMi require a [Developer Certificate of Origin (DCO)](https://github.com/Project-HAMi/HAMi/blob/master/CONTRIBUTING.md).
 
-# 杀掉调度器实例
-./kill_process.sh
+## Support
 
-# 启动调试版本调度器
-./start_debug.sh
-
-# 使用远程调试配置连接
-zjknps.jieshi.space:9523
-```
-
-### 清理环境
-
-完成测试后，您可以运行以下命令清理环境并删除minikube集群：
-```bash
-./demo/delete-cluster.sh
-```
-
-## 参考资料
-
-有关Kubernetes DRA功能和开发自定义资源驱动程序的更多信息，请参阅以下资源：
-
-* [Kubernetes中的动态资源分配](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)
-
-## 社区、讨论、贡献和支持
-待定
+Please open a GitHub issue for questions, bug reports, and feature requests. Include the driver logs, relevant `ResourceClaim` and `ResourceSlice` objects, Kubernetes version, Ascend hardware model, and Ascend driver version when reporting a problem.
