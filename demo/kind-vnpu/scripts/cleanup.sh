@@ -29,6 +29,10 @@ if cluster_exists; then
     if [[ -f "${DEMO_STATE_DIR}/workloads.yaml" ]]; then
       kubectl delete -f "${DEMO_STATE_DIR}/workloads.yaml" \
         --ignore-not-found --wait=true || true
+    fi
+    if [[ -f "${DEMO_STATE_DIR}/setup-resources.yaml" ]]; then
+      kubectl delete -f "${DEMO_STATE_DIR}/setup-resources.yaml" \
+        --ignore-not-found --wait=true || true
     else
       kubectl delete namespace "${TEST_NAMESPACE}" \
         --ignore-not-found --wait=true || true

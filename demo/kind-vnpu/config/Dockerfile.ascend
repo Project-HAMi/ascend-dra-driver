@@ -1,11 +1,18 @@
-ARG BASE_KIND_NODE_IMAGE=kindest/node:v1.34.0-cgroupfs-cdi
-FROM ${BASE_KIND_NODE_IMAGE}
+ARG KIND_NODE_IMAGE=kindest/node:v1.34.0
+FROM ${KIND_NODE_IMAGE}
 
 COPY ascend-docker-runtime-wrapper /usr/local/bin/ascend-docker-runtime-wrapper
 
 RUN set -eux; \
     chmod 0755 /usr/local/bin/ascend-docker-runtime-wrapper; \
     config=/etc/containerd/config.toml; \
+    sed -i \
+      -e 's/enable_cdi = false/enable_cdi = true/g' \
+      -e 's/SystemdCgroup = true/SystemdCgroup = false/g' \
+      "$config"; \
+    if ! grep -Eq '^[[:space:]]*enable_cdi = true$' "$config"; then \
+      sed -i '/\[plugins\."io\.containerd\.grpc\.v1\.cri"\]/a\    enable_cdi = true' "$config"; \
+    fi; \
     if ! grep -q 'containerd.runtimes.ascend' "$config"; then \
       printf '%s\n' \
         '' \
@@ -17,4 +24,6 @@ RUN set -eux; \
         '  SystemdCgroup = false' \
         >> "$config"; \
     fi; \
+    grep -Eq '^[[:space:]]*enable_cdi = true$' "$config"; \
+    ! grep -q 'SystemdCgroup = true' "$config"; \
     grep -n -A7 'containerd.runtimes.ascend' "$config"

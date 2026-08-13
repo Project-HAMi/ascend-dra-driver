@@ -8,6 +8,32 @@ source "${CURRENT_DIR}/common.sh"
 
 cluster_exists || fail "Kind cluster ${KIND_CLUSTER_NAME} does not exist"
 
+missing_resources=()
+for resource in \
+  resourceclaim/npu-share-a resourceclaim/npu-share-b \
+  pod/npu-share-a pod/npu-share-b; do
+  if ! kubectl -n "${TEST_NAMESPACE}" get "${resource}" >/dev/null 2>&1; then
+    missing_resources+=("${resource}")
+  fi
+done
+
+if [[ "${#missing_resources[@]}" -gt 0 ]]; then
+  printf 'ERROR the following prepared resources are missing from namespace %s:\n' \
+    "${TEST_NAMESPACE}" >&2
+  printf '  - %s\n' "${missing_resources[@]}" >&2
+  printf 'Create them first with: %s/demo.sh prepare\n' "${DEMO_DIR}" >&2
+  exit 1
+fi
+
+section "Wait for the prepared resources"
+
+kubectl -n "${TEST_NAMESPACE}" wait \
+  --for=jsonpath='{.status.allocation}' \
+  resourceclaim/npu-share-a resourceclaim/npu-share-b --timeout=5m
+kubectl -n "${TEST_NAMESPACE}" wait \
+  --for=condition=Ready \
+  pod/npu-share-a pod/npu-share-b --timeout=5m
+
 section "Verify DRA allocations"
 
 kubectl -n "${TEST_NAMESPACE}" get resourceclaim \
@@ -27,34 +53,51 @@ for pod in npu-share-a npu-share-b; do
     "${DEMO_STATE_DIR}/${pod}.log"
 done
 
-section "Verify environment, preload, mounts, and device isolation"
+section "Verify environment, preload, mounts, and device visibility"
 
 for pod in npu-share-a npu-share-b; do
+  expected_device_count=1
+  if [[ "${pod}" == "npu-share-b" ]]; then
+    expected_device_count=2
+  fi
   kubectl -n "${TEST_NAMESPACE}" exec "${pod}" -- bash -c '
     set -e
-    test "$ASCEND_VISIBLE_DEVICES" = "0"
+    expected_device_count=$1
+    IFS=, read -r -a visible_devices <<< "${ASCEND_VISIBLE_DEVICES:-}"
+    test "${#visible_devices[@]}" -eq "${expected_device_count}"
+    for device_id in "${visible_devices[@]}"; do
+      case "${device_id}" in
+        "" | *[!0-9]* ) exit 1 ;;
+      esac
+    done
+    if [[ "${expected_device_count}" -eq 2 ]]; then
+      test "${visible_devices[0]}" != "${visible_devices[1]}"
+    fi
     test "$NPU_MEM_QUOTA" = "1024"
     test "$NPU_PRIORITY" = "50"
     test "$NPU_GLOBAL_SHM_PATH" = \
-      "/hami-shared-region/0_global_registry"
+      "/hami-shared-region/${visible_devices[0]}_global_registry"
     test "$NPU_LOCAL_SHM_PATH" = \
       "/hami-vnpu-shmem/vnpu_local_shmem"
 
     test -f /hami-vnpu-core/libvnpu.so
     test ! -e /hami-vnpu-core/limiter
     test -f /hami-vnpu-shmem/vnpu_local_shmem
-    test -f /hami-shared-region/0_global_registry
+    test -f "${NPU_GLOBAL_SHM_PATH}"
     grep -Fx /hami-vnpu-core/libvnpu.so /etc/ld.so.preload
     grep -q /hami-vnpu-core/libvnpu.so /proc/1/maps
 
-    test -c /dev/davinci0
-    test ! -e /dev/davinci1
+    set -- /dev/davinci[0-9]*
+    test "$#" -eq "${expected_device_count}"
+    for device_node in "$@"; do
+      test -c "${device_node}"
+    done
     test -c /dev/davinci_manager
     test -c /dev/devmm_svm
     test -c /dev/hisi_hdc
 
     cat /sys/fs/cgroup/devices/devices.list
-  '
+  ' -- "${expected_device_count}"
 done
 
 section "Verify Claim-scoped CDI and checkpoint state"
@@ -79,9 +122,6 @@ docker exec "${WORKER}" test -f \
   "/usr/local/hami-vnpu-core/containers/${UID_A}/vnpu_local_shmem"
 docker exec "${WORKER}" test -f \
   "/usr/local/hami-vnpu-core/containers/${UID_B}/vnpu_local_shmem"
-docker exec "${WORKER}" test -f \
-  /usr/local/hami-shared-region/0_global_registry
-
 docker exec "${WORKER}" sh -c \
   "grep -R -l '${UID_A}' /var/run/cdi | xargs -r cat" \
   > "${DEMO_STATE_DIR}/claim-a-cdi.yaml"
@@ -110,4 +150,4 @@ grep -q "${UID_A}" "${DEMO_STATE_DIR}/checkpoint-after-prepare.json"
 grep -q "${UID_B}" "${DEMO_STATE_DIR}/checkpoint-after-prepare.json"
 
 save_state
-success "same-device soft split, device isolation, and 1Gi quotas passed"
+success "one-device and two-device claims, device visibility, and 1Gi quotas passed"

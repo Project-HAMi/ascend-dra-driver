@@ -10,7 +10,7 @@ cluster_exists || fail "Kind cluster ${KIND_CLUSTER_NAME} does not exist"
 docker image inspect "${DRIVER_IMAGE}" >/dev/null 2>&1 ||
   fail "driver image does not exist: ${DRIVER_IMAGE}"
 
-section "Load the driver image into the Kind worker"
+section "Load the DRA driver image into the Kind worker"
 
 "${KIND_BIN}" load docker-image "${DRIVER_IMAGE}" \
   --name "${KIND_CLUSTER_NAME}" \
