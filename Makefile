@@ -149,6 +149,7 @@ image: submodules verify-libvnpu-artifacts
 
 HELM_CHART_DIR := deployments/helm/ascend-dra-driver
 HELM_CHART_NAME := ascend-dra-driver
+HELM_RELEASE_WORKFLOW ?= .github/workflows/build-helm-release.yaml
 
 verify-helm-chart:
 	helm lint --strict $(HELM_CHART_DIR)
@@ -176,11 +177,14 @@ verify-helm-release-path:
 	package_path="$$packages/$(HELM_CHART_NAME)-$$chart_version.tgz"; \
 	test -f "$$package_path"; \
 	helm show chart "$$package_path" >/dev/null; \
-	grep -Fq 'uses: helm/chart-releaser-action@v1.6.0' .github/workflows/build-helm-release.yaml; \
-	grep -Fq 'charts_dir: deployments/helm' .github/workflows/build-helm-release.yaml; \
-	if grep -Eq '^[[:space:]]*skip_packaging:[[:space:]]*true' .github/workflows/build-helm-release.yaml; then echo 'chart-releaser skip_packaging must remain disabled' >&2; exit 1; fi; \
-	show_line="$$(grep -n 'helm show chart' .github/workflows/build-helm-release.yaml | cut -d: -f1)"; \
-	package_line="$$(grep -n 'helm package "$${{ env.CHART_PATH }}" --destination .cr-release-packages' .github/workflows/build-helm-release.yaml | cut -d: -f1)"; \
+	chart_releaser_action="$$(awk '$$1 == "uses:" && $$2 ~ /^helm\/chart-releaser-action@/ { count++; ref = $$2 } END { if (count == 1) print ref }' $(HELM_RELEASE_WORKFLOW))"; \
+	if [ -z "$$chart_releaser_action" ]; then echo 'expected exactly one helm/chart-releaser-action reference in $(HELM_RELEASE_WORKFLOW)' >&2; exit 1; fi; \
+	chart_releaser_version="$${chart_releaser_action#*@}"; \
+	if ! printf '%s\n' "$$chart_releaser_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$'; then echo "chart-releaser action must use a full semantic version, got $$chart_releaser_action" >&2; exit 1; fi; \
+	grep -Fq 'charts_dir: deployments/helm' $(HELM_RELEASE_WORKFLOW); \
+	if grep -Eq '^[[:space:]]*skip_packaging:[[:space:]]*true' $(HELM_RELEASE_WORKFLOW); then echo 'chart-releaser skip_packaging must remain disabled' >&2; exit 1; fi; \
+	show_line="$$(grep -n 'helm show chart' $(HELM_RELEASE_WORKFLOW) | cut -d: -f1)"; \
+	package_line="$$(grep -n 'helm package "$${{ env.CHART_PATH }}" --destination .cr-release-packages' $(HELM_RELEASE_WORKFLOW) | cut -d: -f1)"; \
 	if [ -z "$$show_line" ] || [ -z "$$package_line" ] || [ "$$show_line" -ge "$$package_line" ]; then echo 'GHCR existence check must precede packaging' >&2; exit 1; fi
 
 generate: generate-deepcopy
