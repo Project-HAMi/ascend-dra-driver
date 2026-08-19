@@ -85,7 +85,7 @@ type PhysicalNPUState struct {
 type DeviceUpdateCallback func(deviceName string, physicalNpu *PhysicalNPUState)
 
 type VNPUManager struct {
-	sync.Mutex
+	sync.RWMutex
 	PhysicalNPUs         map[string]*PhysicalNPUState
 	Templates            map[string]*VNPUTemplate
 	deviceUpdateCallback DeviceUpdateCallback
@@ -412,7 +412,7 @@ func (s *DeviceState) allocateVNPUSlice(
 		if gpuConfig, ok := oc.Config.(*configapi.NpuConfig); ok {
 			if gpuConfig.VNPUSpec != nil && gpuConfig.VNPUSpec.TemplateName != "" {
 				templateName = gpuConfig.VNPUSpec.TemplateName
-				if tpl, found := s.vnpuManager.Templates[templateName]; found {
+				if tpl, found := s.vnpuManager.Template(templateName); found {
 					requestedAICore = tpl.Attributes.AICORE
 					requestedMemory = tpl.Attributes.Memory
 					log.Printf("Obtained resource requirements from template %s: AICORE=%d, Memory=%dGB",
@@ -838,14 +838,25 @@ func (m *VNPUManager) AllocateSlice(deviceName string, requestedAICore, requeste
 	m.Lock()
 	defer m.Unlock()
 	log.Printf("Attempting to allocate vNPU slice, device: %s, requirements: AICORE=%d, Memory=%dGB", deviceName, requestedAICore, requestedMemory)
-	physicalNpu, ok := m.PhysicalNPUs[deviceName]
-	if !ok {
-		return nil, fmt.Errorf("physical NPU not found: %s", deviceName)
+	physicalNpu := m.findPhysicalNPUByAvailableSlice(deviceName)
+	if physicalNpu == nil {
+		return nil, fmt.Errorf("available NPU slice not found: %s", deviceName)
 	}
 	if requestedAICore == 0 && requestedMemory == 0 {
 		return m.allocateFullCard(physicalNpu, deviceName)
 	}
 	return m.allocateSliceByTemplate(physicalNpu, deviceName, requestedAICore, requestedMemory)
+}
+
+func (m *VNPUManager) findPhysicalNPUByAvailableSlice(sliceID string) *PhysicalNPUState {
+	for _, npu := range m.PhysicalNPUs {
+		for _, slice := range npu.AvailableSlices {
+			if slice.SliceID == sliceID && !slice.Allocated {
+				return npu
+			}
+		}
+	}
+	return nil
 }
 
 // allocateFullCard allocates the entire card
@@ -902,6 +913,7 @@ func (m *VNPUManager) allocateSliceByTemplate(
 
 	currentSlice.TemplateName = bestTemplate.Name
 	currentSlice.Allocated = true
+	currentSlice.Type = "vNPU"
 
 	npu.AllocatedSlices = append(npu.AllocatedSlices, currentSlice)
 
@@ -942,7 +954,7 @@ func CreatePredefinedDeviceClasses(vnpuManager *VNPUManager) error {
 	uniqueModels := make(map[string]bool)
 	uniqueTemplates := make(map[string]*VNPUTemplate)
 
-	for _, pNpu := range vnpuManager.PhysicalNPUs {
+	for _, pNpu := range vnpuManager.PhysicalNPUSnapshots() {
 		modelName := pNpu.ModelName
 		if modelName == "" {
 			modelName = "unknown"

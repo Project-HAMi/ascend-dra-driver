@@ -19,10 +19,51 @@ func NewVNPUManager() (*VNPUManager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get NPU template info: %v", err)
 	}
+	return newVNPUManager(templates), nil
+}
+
+func newVNPUManager(templates map[string]*VNPUTemplate) *VNPUManager {
 	return &VNPUManager{
 		PhysicalNPUs: make(map[string]*PhysicalNPUState),
-		Templates:    templates,
-	}, nil
+		Templates:    cloneTemplates(templates),
+	}
+}
+
+// Template returns an independent copy of a named vNPU template.
+func (m *VNPUManager) Template(name string) (*VNPUTemplate, bool) {
+	m.RLock()
+	defer m.RUnlock()
+
+	template, ok := m.Templates[name]
+	if !ok {
+		return nil, false
+	}
+	copy := *template
+	return &copy, true
+}
+
+// PhysicalNPU returns a deep-copy snapshot of one physical NPU.
+func (m *VNPUManager) PhysicalNPU(deviceName string) (PhysicalNPUState, bool) {
+	m.RLock()
+	defer m.RUnlock()
+
+	npu, ok := m.PhysicalNPUs[deviceName]
+	if !ok {
+		return PhysicalNPUState{}, false
+	}
+	return clonePhysicalNPU(npu), true
+}
+
+// PhysicalNPUSnapshots returns deep-copy snapshots of all physical NPUs.
+func (m *VNPUManager) PhysicalNPUSnapshots() []PhysicalNPUState {
+	m.RLock()
+	defer m.RUnlock()
+
+	snapshots := make([]PhysicalNPUState, 0, len(m.PhysicalNPUs))
+	for _, npu := range m.PhysicalNPUs {
+		snapshots = append(snapshots, clonePhysicalNPU(npu))
+	}
+	return snapshots
 }
 
 // GetVNPUTemplateInfo attempts to read the NPU template information from a file.
@@ -264,7 +305,7 @@ func (d *driver) getAvailableDeviceNames() []string {
 		return deviceNames
 	}
 
-	for _, physicalNpu := range d.state.vnpuManager.PhysicalNPUs {
+	for _, physicalNpu := range d.state.vnpuManager.PhysicalNPUSnapshots() {
 		for _, slice := range physicalNpu.AvailableSlices {
 			deviceNames = append(deviceNames, slice.SliceID)
 		}
@@ -301,4 +342,25 @@ func cloneTemplates(src map[string]*VNPUTemplate) map[string]*VNPUTemplate {
 		dst[k] = &copied
 	}
 	return dst
+}
+
+func cloneSlices(src []*VNPUSlice) []*VNPUSlice {
+	dst := make([]*VNPUSlice, 0, len(src))
+	for _, slice := range src {
+		if slice == nil {
+			dst = append(dst, nil)
+			continue
+		}
+		copy := *slice
+		dst = append(dst, &copy)
+	}
+	return dst
+}
+
+func clonePhysicalNPU(src *PhysicalNPUState) PhysicalNPUState {
+	copy := *src
+	copy.AvailableSlices = cloneSlices(src.AvailableSlices)
+	copy.AllocatedSlices = cloneSlices(src.AllocatedSlices)
+	copy.SupportTemplates = cloneTemplates(src.SupportTemplates)
+	return copy
 }

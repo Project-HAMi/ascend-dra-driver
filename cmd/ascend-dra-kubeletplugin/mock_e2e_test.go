@@ -142,8 +142,8 @@ func TestMockDRAVNPULifecyclePublishesRemainingSlice(t *testing.T) {
 	require.Len(t, prepared[claim.UID].Devices, 1)
 	assert.Equal(t, "npu-0-0", prepared[claim.UID].Devices[0].DeviceName)
 
-	physical := driver.state.vnpuManager.PhysicalNPUs["npu-0-0"]
-	require.NotNil(t, physical)
+	physical, found := driver.state.vnpuManager.PhysicalNPU("npu-0-0")
+	require.True(t, found)
 	require.Len(t, physical.AllocatedSlices, 1)
 	assert.Equal(t, "vir01", physical.AllocatedSlices[0].TemplateName)
 	assert.ElementsMatch(t, []string{"npu-0-0", "npu-0-1"}, publishedDeviceNames(t, publisher.lastPublished(t)))
@@ -156,6 +156,8 @@ func TestMockDRAVNPULifecyclePublishesRemainingSlice(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, unprepared[claim.UID])
+	physical, found = driver.state.vnpuManager.PhysicalNPU("npu-0-0")
+	require.True(t, found)
 	assert.Empty(t, physical.AllocatedSlices)
 	assert.ElementsMatch(t, []string{"npu-0-0"}, publishedDeviceNames(t, publisher.lastPublished(t)))
 }
@@ -182,10 +184,7 @@ func newMockE2EDriver(t *testing.T) (*driver, *fakePluginHelper, string) {
 	t.Helper()
 	t.Setenv("NODE_NAME", mockE2ENodeName)
 
-	vnpuManager := &VNPUManager{
-		PhysicalNPUs: make(map[string]*PhysicalNPUState),
-		Templates:    createDefaultTemplates(),
-	}
+	vnpuManager := newVNPUManager(createDefaultTemplates())
 	allocatable, err := enumerateDevices(newStubManager(), vnpuManager, mockE2ENodeName)
 	require.NoError(t, err)
 

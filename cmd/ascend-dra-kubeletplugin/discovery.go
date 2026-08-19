@@ -56,8 +56,8 @@ func getDeviceResources(mgr *AscendManager, devType string, vnpuManager *VNPUMan
 	if vnpuManager == nil {
 		return 0, 0
 	}
-	physicalNpu := vnpuManager.PhysicalNPUs[deviceName]
-	if physicalNpu == nil {
+	physicalNpu, found := vnpuManager.PhysicalNPU(deviceName)
+	if !found {
 		return 0, 0
 	}
 

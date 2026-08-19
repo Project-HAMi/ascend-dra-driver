@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestVNPUManagerUsesAllocatedFlagAsSingleSourceOfTruth(t *testing.T) {
+func TestVNPUManagerAllocatesAndReleasesMultipleSlices(t *testing.T) {
 	manager := newVNPUManager(createDefaultTemplates())
 	manager.InitPhysicalNPU("npu-0-0", 0, 0, "Ascend910A")
 
@@ -25,6 +25,8 @@ func TestVNPUManagerUsesAllocatedFlagAsSingleSourceOfTruth(t *testing.T) {
 	}
 	assertSliceState(t, &state, first.SliceID, true)
 	assertSliceState(t, &state, second.SliceID, true)
+	assertSliceType(t, &state, first.SliceID, "vNPU")
+	assertSliceType(t, &state, second.SliceID, "vNPU")
 	assertSliceState(t, &state, "npu-0-2", false)
 
 	if err := manager.ReleaseSlice(first.SliceID); err != nil {
@@ -39,12 +41,13 @@ func TestVNPUManagerUsesAllocatedFlagAsSingleSourceOfTruth(t *testing.T) {
 		t.Fatalf("release second slice: %v", err)
 	}
 	state, _ = manager.PhysicalNPU("npu-0-0")
-	if len(state.Slices) != 1 {
-		t.Fatalf("expected one restored full-card slice, got %d", len(state.Slices))
+	if len(state.AvailableSlices) != 1 || len(state.AllocatedSlices) != 0 {
+		t.Fatalf("expected one restored full-card slice, got %d available and %d allocated",
+			len(state.AvailableSlices), len(state.AllocatedSlices))
 	}
 	assertSliceState(t, &state, "npu-0-0", false)
-	if state.Slices[0].Type != "NPU" {
-		t.Fatalf("expected restored full-card type NPU, got %q", state.Slices[0].Type)
+	if state.AvailableSlices[0].Type != "NPU" {
+		t.Fatalf("expected restored full-card type NPU, got %q", state.AvailableSlices[0].Type)
 	}
 }
 
@@ -56,11 +59,11 @@ func TestVNPUManagerSnapshotsAreIndependent(t *testing.T) {
 	if !found {
 		t.Fatal("physical NPU not found")
 	}
-	snapshot.Slices[0].Allocated = true
+	snapshot.AvailableSlices[0].Allocated = true
 	snapshot.SupportTemplates["vir01"].Attributes.Memory = 0
 
 	actual, _ := manager.PhysicalNPU("npu-0-0")
-	if actual.Slices[0].Allocated {
+	if actual.AvailableSlices[0].Allocated {
 		t.Fatal("mutating a slice snapshot changed manager state")
 	}
 	if actual.SupportTemplates["vir01"].Attributes.Memory == 0 {
@@ -119,7 +122,7 @@ func TestVNPUManagerConcurrentSnapshotsAndMutations(t *testing.T) {
 
 func assertSliceState(t *testing.T, state *PhysicalNPUState, sliceID string, allocated bool) {
 	t.Helper()
-	for _, slice := range state.Slices {
+	for _, slice := range allSlices(state) {
 		if slice.SliceID == sliceID {
 			if slice.Allocated != allocated {
 				t.Fatalf("slice %s allocated=%t, want %t", sliceID, slice.Allocated, allocated)
@@ -132,9 +135,29 @@ func assertSliceState(t *testing.T, state *PhysicalNPUState, sliceID string, all
 
 func assertSliceMissing(t *testing.T, state *PhysicalNPUState, sliceID string) {
 	t.Helper()
-	for _, slice := range state.Slices {
+	for _, slice := range allSlices(state) {
 		if slice.SliceID == sliceID {
 			t.Fatalf("slice %s unexpectedly exists", sliceID)
 		}
 	}
+}
+
+func assertSliceType(t *testing.T, state *PhysicalNPUState, sliceID, sliceType string) {
+	t.Helper()
+	for _, slice := range allSlices(state) {
+		if slice.SliceID == sliceID {
+			if slice.Type != sliceType {
+				t.Fatalf("slice %s type=%q, want %q", sliceID, slice.Type, sliceType)
+			}
+			return
+		}
+	}
+	t.Fatalf("slice %s not found", sliceID)
+}
+
+func allSlices(state *PhysicalNPUState) []*VNPUSlice {
+	slices := make([]*VNPUSlice, 0, len(state.AvailableSlices)+len(state.AllocatedSlices))
+	slices = append(slices, state.AvailableSlices...)
+	slices = append(slices, state.AllocatedSlices...)
+	return slices
 }

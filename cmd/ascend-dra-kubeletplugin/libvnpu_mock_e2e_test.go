@@ -92,7 +92,7 @@ func TestMockDRALibvNPULifecycle(t *testing.T) {
 	require.NoError(t, prepared[claim.UID].Err)
 	require.Len(t, prepared[claim.UID].Devices, 1)
 	assert.Equal(t, "npu-0-0", prepared[claim.UID].Devices[0].DeviceName)
-	assert.Empty(t, driver.state.vnpuManager.PhysicalNPUs)
+	assert.Empty(t, driver.state.vnpuManager.PhysicalNPUSnapshots())
 
 	spec := claimSpecContent(t, cdiRoot, "uid-libvnpu")
 	assert.Contains(t, spec, "ASCEND_VISIBLE_DEVICES=0")
