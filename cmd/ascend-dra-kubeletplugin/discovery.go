@@ -126,27 +126,35 @@ func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName str
 		return nil, err
 	}
 
+	hamiVNPUCoreEnabled := featuregates.Enabled(featuregates.HAMivNPUCore)
+	deviceType := consts.DeviceTypeNPU
+	if hamiVNPUCoreEnabled {
+		deviceType = consts.DeviceTypeHAMivNPUCore
+	}
+
 	alldevices := make(AllocatableDevices)
 	for _, dev := range allInfo.AllDevs {
 		deviceName := fmt.Sprintf("%s%d-0", consts.NPUPrefix, dev.LogicID)
 		uuidStr := fmt.Sprintf("%s-%d", nodeName, dev.LogicID)
 
 		devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-			DriverDomain + "index":  {IntValue: ptr.To(int64(dev.LogicID))},
-			physicalIDAttributeName: {IntValue: ptr.To(int64(dev.PhyID))},
-			DriverDomain + "uuid":   {StringValue: ptr.To(uuidStr)},
-			DriverDomain + "model":  {StringValue: ptr.To(dev.DevType)},
-			DriverDomain + "type":   {StringValue: ptr.To("NPU")},
+			consts.DeviceAttributeIndex:       {IntValue: ptr.To(int64(dev.LogicID))},
+			physicalIDAttributeName:           {IntValue: ptr.To(int64(dev.PhyID))},
+			consts.DeviceAttributeUUID:        {StringValue: ptr.To(uuidStr)},
+			consts.DeviceAttributeModel:       {StringValue: ptr.To(dev.DevType)},
+			consts.DeviceAttributeProductName: {StringValue: ptr.To(dev.DevType)},
+			consts.DeviceAttributeBrand:       {StringValue: ptr.To(consts.DeviceBrandHuawei)},
+			consts.DeviceAttributeType:        {StringValue: ptr.To(deviceType)},
 		}
 
 		var capacities map[resourceapi.QualifiedName]resourceapi.DeviceCapacity
-		if featuregates.Enabled(featuregates.HAMivNPUCore) {
+		if hamiVNPUCoreEnabled {
 			capacities = buildLibvNPUDeviceCapacities(mgr, dev.LogicID)
 		} else if vnpuManager != nil {
 			vnpuManager.InitPhysicalNPU(deviceName, dev.LogicID, dev.PhyID, dev.DevType)
 			maxAICore, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
-			devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
-			devAttributes[DriverDomain+"memory"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}
+			devAttributes[consts.DeviceAttributeCores] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
+			devAttributes[consts.DeviceAttributeMemory] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}
 		}
 
 		device := resourceapi.Device{
@@ -154,7 +162,7 @@ func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName str
 			Attributes: devAttributes,
 			Capacity:   capacities,
 		}
-		if featuregates.Enabled(featuregates.HAMivNPUCore) {
+		if hamiVNPUCoreEnabled {
 			device.AllowMultipleAllocations = ptr.To(true)
 		}
 		alldevices[device.Name] = device
@@ -177,7 +185,7 @@ func buildLibvNPUDeviceCapacities(mgr *AscendManager, logicID int32) map[resourc
 	aicoreStep := *resource.NewQuantity(1, resource.DecimalSI)
 
 	return map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
-		DriverDomain + "memory": {
+		consts.DeviceCapacityMemory: {
 			Value: memValue,
 			RequestPolicy: ptr.To(resourceapi.CapacityRequestPolicy{
 				Default: ptr.To(memValue),
@@ -188,7 +196,7 @@ func buildLibvNPUDeviceCapacities(mgr *AscendManager, logicID int32) map[resourc
 				}),
 			}),
 		},
-		DriverDomain + "aicore": {
+		consts.DeviceCapacityCores: {
 			Value: aicoreValue,
 			RequestPolicy: ptr.To(resourceapi.CapacityRequestPolicy{
 				Default: ptr.To(aicoreValue),

@@ -8,4 +8,4 @@ kubeletPlugin:
     enabled: false
   npuSmiHostPath: /usr/local/bin/npu-smi
   nodeSelector:
-    npu.project-hami.io/e2e-node: "true"
+    ascend.project-hami.io/e2e-node: "true"

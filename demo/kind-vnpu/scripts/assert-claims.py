@@ -44,8 +44,8 @@ def main():
     for results in results_by_claim.values():
         for result in results:
             consumed = result["consumedCapacity"]
-            assert consumed["npu.project-hami.io/memory"] == "1Gi", consumed
-            assert consumed["npu.project-hami.io/aicore"] == "50", consumed
+            assert consumed["memory"] == "1Gi", consumed
+            assert consumed["cores"] == "50", consumed
             assert result["shareID"], result
             share_ids.add(result["shareID"])
             pools.add(result["pool"])

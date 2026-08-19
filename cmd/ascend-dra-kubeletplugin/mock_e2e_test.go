@@ -92,8 +92,8 @@ func TestMockDRAFullCardLifecycle(t *testing.T) {
 	assert.Equal(t, mockE2ENodeName, device.PoolName)
 	assert.Equal(t, "npu-0-0", device.DeviceName)
 	assert.ElementsMatch(t, []string{
-		"k8s.npu.project-hami.io/npu=common",
-		"k8s.npu.project-hami.io/npu=uid-full",
+		"k8s.ascend.project-hami.io/npu=common",
+		"k8s.ascend.project-hami.io/npu=uid-full",
 	}, device.CDIDeviceIDs)
 	assert.True(t, claimSpecContains(t, cdiRoot, "uid-full"))
 	assertPreparedClaimExists(t, driver.state, "uid-full")

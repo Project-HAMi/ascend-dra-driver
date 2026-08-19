@@ -19,7 +19,35 @@ package consts
 
 // DriverName is the resource driver name used for registration with kubelet
 // and inside ResourceSlice / ResourceClaim objects.
-const DriverName = "npu.project-hami.io"
+const DriverName = "ascend.project-hami.io"
+
+// ResourceSlice attribute names owned by this driver are intentionally
+// unqualified. Kubernetes interprets unqualified names as belonging to the
+// driver's domain, while consumers such as HAMi-DRA read these map keys
+// directly.
+const (
+	DeviceAttributeIndex       = "index"
+	DeviceAttributePhysicalID  = "physicalID"
+	DeviceAttributeUUID        = "uuid"
+	DeviceAttributeModel       = "model"
+	DeviceAttributeProductName = "productName"
+	DeviceAttributeBrand       = "brand"
+	DeviceAttributeType        = "type"
+	DeviceAttributeCores       = "cores"
+	DeviceAttributeMemory      = "memory"
+)
+
+// ResourceSlice capacity names follow the HAMi-DRA capacity contract.
+const (
+	DeviceCapacityCores  = "cores"
+	DeviceCapacityMemory = "memory"
+)
+
+const (
+	DeviceBrandHuawei      = "Huawei"
+	DeviceTypeNPU          = "NPU"
+	DeviceTypeHAMivNPUCore = "HAMivNPUCore"
+)
 
 // DeviceClassNamePrefix is the prefix used for dynamically created DeviceClasses.
 const DeviceClassNamePrefix = "npu-"

@@ -13,8 +13,8 @@ spec:
           count: 1
           capacity:
             requests:
-              npu.project-hami.io/memory: 1Gi
-              npu.project-hami.io/aicore: 50
+              memory: 1Gi
+              cores: 50
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
@@ -31,12 +31,12 @@ spec:
           count: 2
           capacity:
             requests:
-              npu.project-hami.io/memory: 1Gi
-              npu.project-hami.io/aicore: 50
+              memory: 1Gi
+              cores: 50
     constraints:
       - requests:
           - npu
-        distinctAttribute: npu.project-hami.io/index
+        distinctAttribute: ascend.project-hami.io/index
 ---
 apiVersion: v1
 kind: Pod
@@ -47,7 +47,7 @@ spec:
   runtimeClassName: ascend
   restartPolicy: Never
   nodeSelector:
-    npu.project-hami.io/e2e-node: "true"
+    ascend.project-hami.io/e2e-node: "true"
   containers:
     - name: workload
       image: @@WORKLOAD_IMAGE@@
@@ -103,7 +103,7 @@ spec:
   runtimeClassName: ascend
   restartPolicy: Never
   nodeSelector:
-    npu.project-hami.io/e2e-node: "true"
+    ascend.project-hami.io/e2e-node: "true"
   containers:
     - name: workload
       image: @@WORKLOAD_IMAGE@@

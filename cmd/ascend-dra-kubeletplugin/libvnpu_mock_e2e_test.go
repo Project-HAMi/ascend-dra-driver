@@ -67,8 +67,22 @@ func TestMockDRALibvNPULifecycle(t *testing.T) {
 	))
 	require.NotNil(t, published[0].AllowMultipleAllocations)
 	assert.True(t, *published[0].AllowMultipleAllocations)
-	require.Contains(t, published[0].Capacity, resourceapi.QualifiedName(DriverDomain+"memory"))
-	require.Contains(t, published[0].Capacity, resourceapi.QualifiedName(DriverDomain+"aicore"))
+	require.Contains(t, published[0].Capacity, resourceapi.QualifiedName(consts.DeviceCapacityMemory))
+	require.Contains(t, published[0].Capacity, resourceapi.QualifiedName(consts.DeviceCapacityCores))
+	assert.NotContains(t, published[0].Capacity, resourceapi.QualifiedName(DriverDomain+consts.DeviceCapacityMemory))
+	assert.NotContains(t, published[0].Capacity, resourceapi.QualifiedName(DriverDomain+"aicore"))
+	for _, name := range []resourceapi.QualifiedName{
+		consts.DeviceAttributeUUID,
+		consts.DeviceAttributeProductName,
+		consts.DeviceAttributeBrand,
+		consts.DeviceAttributeType,
+	} {
+		require.Contains(t, published[0].Attributes, name)
+	}
+	assert.Equal(t, consts.DeviceTypeHAMivNPUCore, ptr.Deref(
+		published[0].Attributes[consts.DeviceAttributeType].StringValue,
+		"",
+	))
 
 	claim := allocatedClaim("claim-libvnpu", "uid-libvnpu", "npu-0-0", nil)
 	claim.Status.Allocation.Devices.Results[0].ConsumedCapacity = libvNPUConsumedCapacity("1024Mi", 50)
@@ -115,7 +129,7 @@ func TestMockDRALibvNPUTwoDeviceLifecycle(t *testing.T) {
 	for name, attribute := range driver.state.allocatable["npu-0-0"].Attributes {
 		secondDevice.Attributes[name] = attribute
 	}
-	secondDevice.Attributes[resourceapi.QualifiedName(DriverDomain+"index")] = resourceapi.DeviceAttribute{
+	secondDevice.Attributes[resourceapi.QualifiedName(consts.DeviceAttributeIndex)] = resourceapi.DeviceAttribute{
 		IntValue: ptr.To(int64(1)),
 	}
 	secondDevice.Attributes[physicalIDAttributeName] = resourceapi.DeviceAttribute{
@@ -217,6 +231,25 @@ func TestLibvNPUApplyConfigRejectsMismatchedCapacity(t *testing.T) {
 	require.ErrorContains(t, err, "capacities must be same across devices")
 }
 
+func TestLibvNPUApplyConfigAcceptsLegacyQualifiedCapacityNames(t *testing.T) {
+	enableHAMivNPUCore(t)
+	driver, _, _ := newMockE2EDriver(t)
+	result := &resourceapi.DeviceRequestAllocationResult{
+		Request:          "npu",
+		Device:           "npu-0-0",
+		ConsumedCapacity: legacyLibvNPUConsumedCapacity("1024Mi", 50),
+	}
+
+	edits, err := driver.state.applyLibvNPUConfig(
+		[]*resourceapi.DeviceRequestAllocationResult{result},
+		t.TempDir(),
+	)
+	require.NoError(t, err)
+	require.Contains(t, edits, "npu-0-0")
+	assert.Contains(t, edits["npu-0-0"].Env, "NPU_MEM_QUOTA=1024")
+	assert.Contains(t, edits["npu-0-0"].Env, "NPU_PRIORITY=50")
+}
+
 func TestLibvNPUClaimLocalShmemPathRejectsUnsafeUID(t *testing.T) {
 	state := &DeviceState{libvNPUHostPath: t.TempDir()}
 
@@ -266,6 +299,13 @@ func enableHAMivNPUCore(t *testing.T) {
 }
 
 func libvNPUConsumedCapacity(memory string, priority int64) map[resourceapi.QualifiedName]resource.Quantity {
+	return map[resourceapi.QualifiedName]resource.Quantity{
+		resourceapi.QualifiedName(consts.DeviceCapacityMemory): resource.MustParse(memory),
+		resourceapi.QualifiedName(consts.DeviceCapacityCores):  *resource.NewQuantity(priority, resource.DecimalSI),
+	}
+}
+
+func legacyLibvNPUConsumedCapacity(memory string, priority int64) map[resourceapi.QualifiedName]resource.Quantity {
 	return map[resourceapi.QualifiedName]resource.Quantity{
 		resourceapi.QualifiedName(DriverDomain + "memory"): resource.MustParse(memory),
 		resourceapi.QualifiedName(DriverDomain + "aicore"): *resource.NewQuantity(priority, resource.DecimalSI),

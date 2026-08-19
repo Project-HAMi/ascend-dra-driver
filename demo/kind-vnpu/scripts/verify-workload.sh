@@ -148,7 +148,7 @@ grep -q "/containers/${UID_B}" \
   "${DEMO_STATE_DIR}/claim-b-cdi.yaml"
 
 docker exec "${WORKER}" cat \
-  /var/lib/kubelet/plugins/npu.project-hami.io/checkpoint.json \
+  /var/lib/kubelet/plugins/ascend.project-hami.io/checkpoint.json \
   > "${DEMO_STATE_DIR}/checkpoint-after-prepare.json"
 grep -q "${UID_A}" "${DEMO_STATE_DIR}/checkpoint-after-prepare.json"
 grep -q "${UID_B}" "${DEMO_STATE_DIR}/checkpoint-after-prepare.json"
