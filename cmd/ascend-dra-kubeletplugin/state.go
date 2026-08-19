@@ -45,7 +45,7 @@ const (
 	defaultLibvNPUHostPath                                   = "/usr/local/hami-vnpu-core"
 	libvNPULocalShmemContainerPath                           = "/hami-vnpu-shmem"
 	libvNPULocalShmemFileName                                = "vnpu_local_shmem"
-	physicalIDAttributeName        resourceapi.QualifiedName = DriverDomain + "physicalID"
+	physicalIDAttributeName        resourceapi.QualifiedName = consts.DeviceAttributePhysicalID
 )
 
 type OpaqueDeviceConfig struct {
@@ -503,17 +503,18 @@ func (s *DeviceState) applyLibvNPUConfig(
 
 	memoryBytes, err := s.libvNPUCapacityValue(
 		results[0],
-		resourceapi.QualifiedName(DriverDomain+"memory"),
-		resourceapi.QualifiedName("memory"),
+		resourceapi.QualifiedName(consts.DeviceCapacityMemory),
+		resourceapi.QualifiedName(DriverDomain+consts.DeviceCapacityMemory),
 	)
 	if err != nil {
 		return perDeviceEdits, err
 	}
 	priority, err := s.libvNPUCapacityValue(
 		results[0],
+		resourceapi.QualifiedName(consts.DeviceCapacityCores),
 		resourceapi.QualifiedName(DriverDomain+"aicore"),
 		resourceapi.QualifiedName("aicore"),
-		resourceapi.QualifiedName("cores"),
+		resourceapi.QualifiedName(DriverDomain+consts.DeviceCapacityCores),
 	)
 	if err != nil {
 		return perDeviceEdits, err
@@ -982,7 +983,7 @@ func CreatePredefinedDeviceClasses(vnpuManager *VNPUManager) error {
 func createFullCardDeviceClass(clientset *kubernetes.Clientset, modelName string) error {
 	safeModel := toSafeModelName(modelName)
 	dcName := fmt.Sprintf("%s%s%s%s", consts.DeviceClassNamePrefix, safeModel, consts.DeviceClassNameSuffix, "")
-	expr := fmt.Sprintf(`device.attributes["%s"].model == "%s" && device.attributes["%s"].type == "NPU"`,
+	expr := fmt.Sprintf(`device.attributes["%s"].productName == "%s" && device.attributes["%s"].type == "NPU"`,
 		DriverDomainName, modelName, DriverDomainName)
 	return upsertDeviceClass(clientset, dcName, expr, "")
 }
@@ -991,7 +992,7 @@ func createFullCardDeviceClass(clientset *kubernetes.Clientset, modelName string
 func createMemoryDeviceClass(clientset *kubernetes.Clientset, modelName string, tpl *VNPUTemplate) error {
 	safeModel := toSafeModelName(modelName)
 	dcName := fmt.Sprintf("%s%s-mem%d%s", consts.DeviceClassNamePrefix, safeModel, tpl.Attributes.Memory, consts.DeviceClassNameSuffix)
-	expr := fmt.Sprintf(`device.attributes["%s"].memory >= %d && device.attributes["%s"].model == "%s"`,
+	expr := fmt.Sprintf(`device.attributes["%s"].memory >= %d && device.attributes["%s"].productName == "%s"`,
 		DriverDomainName, tpl.Attributes.Memory, DriverDomainName, modelName)
 	return upsertDeviceClass(clientset, dcName, expr, tpl.Name)
 }
@@ -1000,7 +1001,7 @@ func createMemoryDeviceClass(clientset *kubernetes.Clientset, modelName string, 
 func createAICoreDeviceClass(clientset *kubernetes.Clientset, modelName string, tpl *VNPUTemplate) error {
 	safeModel := toSafeModelName(modelName)
 	dcName := fmt.Sprintf("%s%s-aicore%d%s", consts.DeviceClassNamePrefix, safeModel, tpl.Attributes.AICORE, consts.DeviceClassNameSuffix)
-	expr := fmt.Sprintf(`device.attributes["%s"].aicore >= %d && device.attributes["%s"].model == "%s"`,
+	expr := fmt.Sprintf(`device.attributes["%s"].cores >= %d && device.attributes["%s"].productName == "%s"`,
 		DriverDomainName, tpl.Attributes.AICORE, DriverDomainName, modelName)
 	return upsertDeviceClass(clientset, dcName, expr, tpl.Name)
 }
@@ -1046,7 +1047,7 @@ func upsertDeviceClass(clientset *kubernetes.Clientset, name, expr, tpl string) 
 // buildDeviceClass generates the target DeviceClass
 func buildDeviceClass(name, celExpression, tplName string) (*resourceapi.DeviceClass, error) {
 	paramObj := map[string]interface{}{
-		"apiVersion": "npu.project-hami.io/v1alpha1",
+		"apiVersion": configapi.GroupName + "/" + configapi.Version,
 		"kind":       "NpuConfig",
 		"vnpuSpec": map[string]interface{}{
 			"templateName": tplName,
@@ -1111,11 +1112,13 @@ func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *Ph
 	uuidStr := fmt.Sprintf("%s-%d", os.Getenv("NODE_NAME"), physicalNpu.LogicID)
 
 	devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
-		DriverDomain + "index":  {IntValue: ptr.To(int64(physicalNpu.LogicID))},
-		physicalIDAttributeName: {IntValue: ptr.To(int64(physicalNpu.PhyID))},
-		DriverDomain + "uuid":   {StringValue: ptr.To(uuidStr)},
-		DriverDomain + "model":  {StringValue: ptr.To(physicalNpu.ModelName)},
-		DriverDomain + "type":   {StringValue: ptr.To(sliceType)},
+		consts.DeviceAttributeIndex:       {IntValue: ptr.To(int64(physicalNpu.LogicID))},
+		physicalIDAttributeName:           {IntValue: ptr.To(int64(physicalNpu.PhyID))},
+		consts.DeviceAttributeUUID:        {StringValue: ptr.To(uuidStr)},
+		consts.DeviceAttributeModel:       {StringValue: ptr.To(physicalNpu.ModelName)},
+		consts.DeviceAttributeProductName: {StringValue: ptr.To(physicalNpu.ModelName)},
+		consts.DeviceAttributeBrand:       {StringValue: ptr.To(consts.DeviceBrandHuawei)},
+		consts.DeviceAttributeType:        {StringValue: ptr.To(sliceType)},
 	}
 
 	if s.vnpuManager != nil {
@@ -1129,8 +1132,8 @@ func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *Ph
 			}
 		}
 
-		devAttributes[DriverDomain+"aicore"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
-		devAttributes[DriverDomain+"memory"] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}
+		devAttributes[consts.DeviceAttributeCores] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
+		devAttributes[consts.DeviceAttributeMemory] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}
 	}
 
 	device := resourceapi.Device{

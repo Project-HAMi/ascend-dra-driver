@@ -11,6 +11,6 @@ spec:
   selectors:
     - cel:
         expression: >-
-          device.driver == "npu.project-hami.io" &&
+          device.driver == "ascend.project-hami.io" &&
           device.allowMultipleAllocations == true &&
-          device.attributes["npu.project-hami.io"].type == "NPU"
+          device.attributes["ascend.project-hami.io"].type == "HAMivNPUCore"

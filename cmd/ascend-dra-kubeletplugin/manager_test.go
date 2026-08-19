@@ -21,8 +21,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	resourceapi "k8s.io/api/resource/v1"
+	"k8s.io/utils/ptr"
 
 	"github.com/Project-HAMi/hami-dra-driver/pkg/common"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 
 	"ascend-common/devmanager"
 	npuCommon "ascend-common/devmanager/common"
@@ -154,10 +157,36 @@ func TestEnumerateDevicesPublishesDiscoveredPhysicalID(t *testing.T) {
 	devices, err := enumerateDevices(am, nil, "test-node")
 	require.NoError(t, err)
 	require.Contains(t, devices, "npu-1-0")
-	physicalID, ok := devices["npu-1-0"].Attributes[physicalIDAttributeName]
+	device := devices["npu-1-0"]
+	physicalID, ok := device.Attributes[physicalIDAttributeName]
 	require.True(t, ok)
 	require.NotNil(t, physicalID.IntValue)
 	assert.Equal(t, int64(2), *physicalID.IntValue)
+
+	for _, name := range []resourceapi.QualifiedName{
+		consts.DeviceAttributeIndex,
+		consts.DeviceAttributePhysicalID,
+		consts.DeviceAttributeUUID,
+		consts.DeviceAttributeModel,
+		consts.DeviceAttributeProductName,
+		consts.DeviceAttributeBrand,
+		consts.DeviceAttributeType,
+	} {
+		assert.Contains(t, device.Attributes, name)
+		assert.NotContains(t, device.Attributes, resourceapi.QualifiedName(DriverDomain+string(name)))
+	}
+	assert.Equal(t, "Ascend910A", ptr.Deref(
+		device.Attributes[consts.DeviceAttributeProductName].StringValue,
+		"",
+	))
+	assert.Equal(t, consts.DeviceBrandHuawei, ptr.Deref(
+		device.Attributes[consts.DeviceAttributeBrand].StringValue,
+		"",
+	))
+	assert.Equal(t, consts.DeviceTypeNPU, ptr.Deref(
+		device.Attributes[consts.DeviceAttributeType].StringValue,
+		"",
+	))
 }
 
 func TestNewHwDevManagerVirtualDevice(t *testing.T) {

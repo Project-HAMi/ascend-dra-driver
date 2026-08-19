@@ -15,6 +15,6 @@
  */
 
 // +k8s:deepcopy-gen=package
-// +groupName=npu.project-hami.io
+// +groupName=ascend.project-hami.io
 
 package v1alpha1

@@ -9,7 +9,7 @@ nodes:
 @@KUBELET_CGROUP_PATCH@@
   - role: worker
     labels:
-      npu.project-hami.io/e2e-node: "true"
+      ascend.project-hami.io/e2e-node: "true"
     extraMounts:
       - hostPath: /usr/local/Ascend
         containerPath: /usr/local/Ascend

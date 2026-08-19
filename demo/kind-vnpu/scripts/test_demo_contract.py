@@ -18,8 +18,8 @@ def allocation_result(device, share_id):
         "pool": "worker",
         "shareID": share_id,
         "consumedCapacity": {
-            "npu.project-hami.io/memory": "1Gi",
-            "npu.project-hami.io/aicore": "50",
+            "memory": "1Gi",
+            "cores": "50",
         },
     }
 
@@ -127,12 +127,18 @@ fi
         claim_b = template.split("name: npu-share-b", 1)[1].split("---", 1)[0]
         self.assertIn("count: 2", claim_b)
         self.assertIn("constraints:", claim_b)
-        self.assertIn("distinctAttribute: npu.project-hami.io/index", claim_b)
+        self.assertIn("distinctAttribute: ascend.project-hami.io/index", claim_b)
+        self.assertIn("memory: 1Gi", claim_b)
+        self.assertIn("cores: 50", claim_b)
+        self.assertNotIn("/aicore", claim_b)
 
         setup_template = (
             DEMO_DIR / "templates" / "setup-resources.yaml.tpl"
         ).read_text(encoding="utf-8")
         self.assertNotIn(".index == 0", setup_template)
+        self.assertIn('device.driver == "ascend.project-hami.io"', setup_template)
+        self.assertIn('.type == "HAMivNPUCore"', setup_template)
+        self.assertNotIn('.type == "NPU"', setup_template)
 
 
 if __name__ == "__main__":

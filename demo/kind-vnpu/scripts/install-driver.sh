@@ -67,9 +67,9 @@ kubectl get resourceslices -o yaml |
 grep -q 'npu-0-0' "${DEMO_STATE_DIR}/resourceslices.yaml"
 grep -q 'allowMultipleAllocations: true' \
   "${DEMO_STATE_DIR}/resourceslices.yaml"
-grep -q 'npu.project-hami.io/memory' \
+grep -q '^ *memory:' \
   "${DEMO_STATE_DIR}/resourceslices.yaml"
-grep -q 'npu.project-hami.io/aicore' \
+grep -q '^ *cores:' \
   "${DEMO_STATE_DIR}/resourceslices.yaml"
 
 for card_id in ${DEVICE_SHARE_CARD_IDS}; do

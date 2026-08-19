@@ -1,6 +1,6 @@
 # Ascend DRA Driver
 
-The Ascend DRA Driver (`npu.project-hami.io`) exposes Huawei Ascend NPUs through Kubernetes [Dynamic Resource Allocation (DRA)](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/).
+The Ascend DRA Driver (`ascend.project-hami.io`) exposes Huawei Ascend NPUs through Kubernetes [Dynamic Resource Allocation (DRA)](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/).
 
 ## Support Status
 

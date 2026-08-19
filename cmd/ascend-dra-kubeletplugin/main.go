@@ -37,8 +37,8 @@ import (
 )
 
 const (
-	DriverDomainName           = "npu.project-hami.io"
-	DriverDomain               = "npu.project-hami.io/"
+	DriverDomainName           = consts.DriverName
+	DriverDomain               = consts.DriverName + "/"
 	DriverPluginCheckpointFile = "checkpoint.json"
 )
 

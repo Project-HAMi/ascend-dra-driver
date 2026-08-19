@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	GroupName = "npu.project-hami.io"
+	GroupName = "ascend.project-hami.io"
 	Version   = "v1alpha1"
 
 	NpuConfigKind = "NpuConfig"
