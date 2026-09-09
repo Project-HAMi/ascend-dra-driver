@@ -17,6 +17,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,6 +30,7 @@ import (
 
 	"ascend-common/devmanager"
 	npuCommon "ascend-common/devmanager/common"
+	"ascend-common/devmanager/dcmi"
 )
 
 // stubDeviceManager embeds the upstream mock and overrides only the methods
@@ -42,6 +44,7 @@ type stubDeviceManager struct {
 	physicIDMap      map[int32]int32
 	cardDeviceIDMap  map[int32][2]int32
 	chipMap          map[int32]*npuCommon.ChipInfo
+	uuidMap          map[int32]string
 }
 
 func (s *stubDeviceManager) GetDeviceList() (int32, []int32, error) {
@@ -69,6 +72,13 @@ func (s *stubDeviceManager) GetChipInfo(logicID int32) (*npuCommon.ChipInfo, err
 	return &npuCommon.ChipInfo{Name: "Ascend910A"}, nil
 }
 
+func (s *stubDeviceManager) GetDieID(logicID int32, _ dcmi.DieType) (string, error) {
+	if uuid, ok := s.uuidMap[logicID]; ok {
+		return uuid, nil
+	}
+	return fmt.Sprintf("npu-uuid-%d", logicID), nil
+}
+
 func (s *stubDeviceManager) GetVirtualDeviceInfo(logicID int32) (npuCommon.VirtualDevInfo, error) {
 	if vdev, ok := s.virtualDeviceMap[logicID]; ok {
 		return vdev, nil
@@ -93,6 +103,7 @@ func newStubManager() *AscendManager {
 func TestAssembleNPUDeviceStruct(t *testing.T) {
 	am := &AscendManager{}
 	dev := am.assembleNPUDeviceStruct("Ascend910A", "Ascend910A-0", common.DavinciDev{
+		UUID:    "npu-uuid-1",
 		LogicID: 1,
 		PhyID:   2,
 		CardID:  3,
@@ -100,6 +111,7 @@ func TestAssembleNPUDeviceStruct(t *testing.T) {
 
 	assert.Equal(t, "Ascend910A", dev.DevType)
 	assert.Equal(t, "Ascend910A-0", dev.DeviceName)
+	assert.Equal(t, "npu-uuid-1", dev.UUID)
 	assert.Equal(t, int32(1), dev.LogicID)
 	assert.Equal(t, int32(2), dev.PhyID)
 	assert.Equal(t, int32(3), dev.CardID)
@@ -145,6 +157,7 @@ func TestNewHwDevManagerPhysicalDevice(t *testing.T) {
 	assert.Len(t, info.AllDevs, 1)
 	assert.Equal(t, "Ascend910A-0", info.AllDevs[0].DeviceName)
 	assert.Equal(t, "Ascend910A", info.AllDevs[0].DevType)
+	assert.Equal(t, "npu-uuid-0", info.AllDevs[0].UUID)
 }
 
 func TestEnumerateDevicesPublishesDiscoveredPhysicalID(t *testing.T) {
@@ -154,7 +167,7 @@ func TestEnumerateDevicesPublishesDiscoveredPhysicalID(t *testing.T) {
 	stub.physicIDMap = map[int32]int32{0: 0, 1: 2}
 	stub.chipMap[1] = &npuCommon.ChipInfo{Name: "Ascend910A"}
 
-	devices, err := enumerateDevices(am, nil, "test-node")
+	devices, err := enumerateDevices(am, nil)
 	require.NoError(t, err)
 	require.Contains(t, devices, "npu-1-0")
 	device := devices["npu-1-0"]
@@ -162,6 +175,10 @@ func TestEnumerateDevicesPublishesDiscoveredPhysicalID(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, physicalID.IntValue)
 	assert.Equal(t, int64(2), *physicalID.IntValue)
+	assert.Equal(t, "npu-uuid-1", ptr.Deref(
+		device.Attributes[consts.DeviceAttributeUUID].StringValue,
+		"",
+	))
 
 	for _, name := range []resourceapi.QualifiedName{
 		consts.DeviceAttributeIndex,
@@ -187,6 +204,15 @@ func TestEnumerateDevicesPublishesDiscoveredPhysicalID(t *testing.T) {
 		device.Attributes[consts.DeviceAttributeType].StringValue,
 		"",
 	))
+}
+
+func TestNewHwDevManagerRejectsEmptyUUID(t *testing.T) {
+	am := newStubManager()
+	stub := am.mgr.(*stubDeviceManager)
+	stub.uuidMap = map[int32]string{0: ""}
+
+	_, err := am.NewHwDevManager()
+	assert.Error(t, err)
 }
 
 func TestNewHwDevManagerVirtualDevice(t *testing.T) {

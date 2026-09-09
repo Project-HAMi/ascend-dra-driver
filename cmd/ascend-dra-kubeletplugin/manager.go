@@ -25,6 +25,7 @@ import (
 
 	"ascend-common/devmanager"
 	npuCommon "ascend-common/devmanager/common"
+	"ascend-common/devmanager/dcmi"
 )
 
 type Device struct {
@@ -125,11 +126,27 @@ func (am *AscendManager) getDavinciDev(logicID int32) (common.DavinciDev, error)
 	if err != nil {
 		return common.DavinciDev{}, err
 	}
+	uuid, err := am.getDeviceUUID(logicID)
+	if err != nil {
+		return common.DavinciDev{}, err
+	}
 	return common.DavinciDev{
+		UUID:    uuid,
 		LogicID: logicID,
 		PhyID:   phyID,
 		CardID:  cardID,
 	}, nil
+}
+
+func (am *AscendManager) getDeviceUUID(logicID int32) (string, error) {
+	uuid, err := am.mgr.GetDieID(logicID, dcmi.VDIE)
+	if err != nil {
+		return "", fmt.Errorf("get device UUID for logic ID %d: %w", logicID, err)
+	}
+	if uuid == "" {
+		return "", fmt.Errorf("empty device UUID for logic ID %d", logicID)
+	}
+	return uuid, nil
 }
 
 func (am *AscendManager) getVirtualDevice(logicID int32) (npuCommon.VirtualDevInfo, error) {
@@ -154,6 +171,7 @@ func (am *AscendManager) assembleNPUDeviceStruct(deviType, deviceName string,
 	return common.NPUDevice{
 		DevType:    deviType,
 		DeviceName: deviceName,
+		UUID:       davinciDev.UUID,
 		LogicID:    davinciDev.LogicID,
 		PhyID:      davinciDev.PhyID,
 		CardID:     davinciDev.CardID,

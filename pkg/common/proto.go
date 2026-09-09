@@ -49,6 +49,7 @@ type NPUAllInfo struct {
 type NPUDevice struct {
 	DevType    string
 	DeviceName string
+	UUID       string
 	LogicID    int32
 	PhyID      int32
 	CardID     int32
@@ -56,6 +57,7 @@ type NPUDevice struct {
 
 // DavinciDev describes a DaVinci NPU device as reported by the DCMI interface.
 type DavinciDev struct {
+	UUID    string
 	LogicID int32
 	PhyID   int32
 	CardID  int32

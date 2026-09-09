@@ -185,7 +185,7 @@ func newMockE2EDriver(t *testing.T) (*driver, *fakePluginHelper, string) {
 	t.Setenv("NODE_NAME", mockE2ENodeName)
 
 	vnpuManager := newVNPUManager(createDefaultTemplates())
-	allocatable, err := enumerateDevices(newStubManager(), vnpuManager, mockE2ENodeName)
+	allocatable, err := enumerateDevices(newStubManager(), vnpuManager)
 	require.NoError(t, err)
 
 	pluginRoot := t.TempDir()

@@ -65,6 +65,10 @@ func TestMockDRALibvNPULifecycle(t *testing.T) {
 		published[0].Attributes[physicalIDAttributeName].IntValue,
 		int64(-1),
 	))
+	assert.Equal(t, "npu-uuid-0", ptr.Deref(
+		published[0].Attributes[consts.DeviceAttributeUUID].StringValue,
+		"",
+	))
 	require.NotNil(t, published[0].AllowMultipleAllocations)
 	assert.True(t, *published[0].AllowMultipleAllocations)
 	require.Contains(t, published[0].Capacity, resourceapi.QualifiedName(consts.DeviceCapacityMemory))

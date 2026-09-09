@@ -8,7 +8,7 @@ import (
 
 func TestVNPUManagerAllocatesAndReleasesMultipleSlices(t *testing.T) {
 	manager := newVNPUManager(createDefaultTemplates())
-	manager.InitPhysicalNPU("npu-0-0", 0, 0, "Ascend910A")
+	manager.InitPhysicalNPU("npu-0-0", 0, 0, "Ascend910A", "npu-uuid-0")
 
 	first, err := manager.AllocateSlice("npu-0-0", 4, 8)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestVNPUManagerAllocatesAndReleasesMultipleSlices(t *testing.T) {
 
 func TestVNPUManagerSnapshotsAreIndependent(t *testing.T) {
 	manager := newVNPUManager(createDefaultTemplates())
-	manager.InitPhysicalNPU("npu-0-0", 0, 0, "Ascend910A")
+	manager.InitPhysicalNPU("npu-0-0", 0, 0, "Ascend910A", "npu-uuid-0")
 
 	snapshot, found := manager.PhysicalNPU("npu-0-0")
 	if !found {
@@ -73,7 +73,7 @@ func TestVNPUManagerSnapshotsAreIndependent(t *testing.T) {
 
 func TestVNPUManagerConcurrentSnapshotsAndMutations(t *testing.T) {
 	manager := newVNPUManager(createDefaultTemplates())
-	manager.InitPhysicalNPU("npu-0-0", 0, 0, "Ascend910A")
+	manager.InitPhysicalNPU("npu-0-0", 0, 0, "Ascend910A", "npu-uuid-0")
 
 	start := make(chan struct{})
 	errors := make(chan error, 5)

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -113,14 +112,14 @@ func enumerateAllPossibleDevices() (AllocatableDevices, *VNPUManager, error) {
 		}
 	}
 
-	alldevices, err := enumerateDevices(mgr, vnpuManager, os.Getenv("NODE_NAME"))
+	alldevices, err := enumerateDevices(mgr, vnpuManager)
 	if err != nil {
 		return nil, nil, err
 	}
 	return alldevices, vnpuManager, nil
 }
 
-func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName string) (AllocatableDevices, error) {
+func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager) (AllocatableDevices, error) {
 	allInfo, err := mgr.NewHwDevManager()
 	if err != nil {
 		return nil, err
@@ -135,12 +134,11 @@ func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName str
 	alldevices := make(AllocatableDevices)
 	for _, dev := range allInfo.AllDevs {
 		deviceName := fmt.Sprintf("%s%d-0", consts.NPUPrefix, dev.LogicID)
-		uuidStr := fmt.Sprintf("%s-%d", nodeName, dev.LogicID)
 
 		devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 			consts.DeviceAttributeIndex:       {IntValue: ptr.To(int64(dev.LogicID))},
 			physicalIDAttributeName:           {IntValue: ptr.To(int64(dev.PhyID))},
-			consts.DeviceAttributeUUID:        {StringValue: ptr.To(uuidStr)},
+			consts.DeviceAttributeUUID:        {StringValue: ptr.To(dev.UUID)},
 			consts.DeviceAttributeModel:       {StringValue: ptr.To(dev.DevType)},
 			consts.DeviceAttributeProductName: {StringValue: ptr.To(dev.DevType)},
 			consts.DeviceAttributeBrand:       {StringValue: ptr.To(consts.DeviceBrandHuawei)},
@@ -151,7 +149,7 @@ func enumerateDevices(mgr *AscendManager, vnpuManager *VNPUManager, nodeName str
 		if hamiVNPUCoreEnabled {
 			capacities = buildLibvNPUDeviceCapacities(mgr, dev.LogicID)
 		} else if vnpuManager != nil {
-			vnpuManager.InitPhysicalNPU(deviceName, dev.LogicID, dev.PhyID, dev.DevType)
+			vnpuManager.InitPhysicalNPU(deviceName, dev.LogicID, dev.PhyID, dev.DevType, dev.UUID)
 			maxAICore, maxMemory := getDeviceResources(mgr, dev.DevType, vnpuManager, deviceName)
 			devAttributes[consts.DeviceAttributeCores] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxAICore))}
 			devAttributes[consts.DeviceAttributeMemory] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(maxMemory))}

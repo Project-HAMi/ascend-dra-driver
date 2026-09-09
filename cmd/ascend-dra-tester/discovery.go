@@ -34,6 +34,7 @@ import (
 type RawDeviceInfo struct {
 	LogicID      int32  `json:"logicID"`
 	PhyID        int32  `json:"phyID"`
+	UUID         string `json:"uuid"`
 	CardID       int32  `json:"cardID"`
 	RawDevType   string `json:"rawDevType"`
 	AICore       int64  `json:"aiCore"`
@@ -103,11 +104,10 @@ func DiscoverNPUDevices(nodeName string) (*DiscoveredDevicesResult, error) {
 
 	for _, dev := range allInfo.AllDevs {
 		deviceName := fmt.Sprintf("%s%d-0", consts.NPUPrefix, dev.LogicID)
-		uuidStr := fmt.Sprintf("%s-%d", nodeName, dev.LogicID)
 
 		devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 			consts.DeviceAttributeIndex:       {IntValue: ptr.To(int64(dev.LogicID))},
-			consts.DeviceAttributeUUID:        {StringValue: ptr.To(uuidStr)},
+			consts.DeviceAttributeUUID:        {StringValue: ptr.To(dev.UUID)},
 			consts.DeviceAttributeModel:       {StringValue: ptr.To(dev.DevType)},
 			consts.DeviceAttributeProductName: {StringValue: ptr.To(dev.DevType)},
 			consts.DeviceAttributeBrand:       {StringValue: ptr.To(consts.DeviceBrandHuawei)},
@@ -130,6 +130,7 @@ func DiscoverNPUDevices(nodeName string) (*DiscoveredDevicesResult, error) {
 		rdi := RawDeviceInfo{
 			LogicID:    dev.LogicID,
 			PhyID:      dev.PhyID,
+			UUID:       dev.UUID,
 			CardID:     dev.CardID,
 			RawDevType: dev.DevType,
 			AICore:     int64(aiCores),

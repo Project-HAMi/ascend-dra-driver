@@ -75,6 +75,7 @@ type PhysicalNPUState struct {
 	PhysicalDeviceID string
 	LogicID          int32
 	PhyID            int32
+	UUID             string
 	ModelName        string
 	AvailableSlices  []*VNPUSlice
 	AllocatedSlices  []*VNPUSlice
@@ -1121,12 +1122,10 @@ func (s *DeviceState) UpdateAllocatableDevice(deviceName string, physicalNpu *Ph
 		}
 	}
 
-	uuidStr := fmt.Sprintf("%s-%d", os.Getenv("NODE_NAME"), physicalNpu.LogicID)
-
 	devAttributes := map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
 		consts.DeviceAttributeIndex:       {IntValue: ptr.To(int64(physicalNpu.LogicID))},
 		physicalIDAttributeName:           {IntValue: ptr.To(int64(physicalNpu.PhyID))},
-		consts.DeviceAttributeUUID:        {StringValue: ptr.To(uuidStr)},
+		consts.DeviceAttributeUUID:        {StringValue: ptr.To(physicalNpu.UUID)},
 		consts.DeviceAttributeModel:       {StringValue: ptr.To(physicalNpu.ModelName)},
 		consts.DeviceAttributeProductName: {StringValue: ptr.To(physicalNpu.ModelName)},
 		consts.DeviceAttributeBrand:       {StringValue: ptr.To(consts.DeviceBrandHuawei)},
