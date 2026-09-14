@@ -1,2 +1,14 @@
-# 注意：默认 deviceclass 已经由代码中的 CreatePredefinedDeviceClasses 函数自动创建
-# 此文件不再需要静态定义 DeviceClass
+{{- if not .Values.kubeletPlugin.fullCardAndTraditionalVNPU.enabled }}
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: npu-hamivnpucore.project-hami.io
+  labels:
+    {{- include "ascend-dra-driver.labels" . | nindent 4 }}
+spec:
+  selectors:
+  - cel:
+      expression: |-
+        device.driver == "ascend.project-hami.io" &&
+        device.attributes["ascend.project-hami.io"].type == "HAMivNPUCore"
+{{- end }}

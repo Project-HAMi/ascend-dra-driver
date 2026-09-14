@@ -160,12 +160,17 @@ verify-helm-chart:
 			--namespace $(HELM_CHART_NAME) > "$$rendered/default.yaml"; \
 		grep -Fq -- 'command: ["/usr/bin/ascend-dra-kubeletplugin"]' "$$rendered/default.yaml"; \
 		grep -Fq -- '--feature-gates=HAMivNPUCore=true' "$$rendered/default.yaml"; \
+		grep -Fq -- 'name: npu-hamivnpucore.project-hami.io' "$$rendered/default.yaml"; \
 		helm template $(HELM_CHART_NAME) $(HELM_CHART_DIR) \
 			--namespace $(HELM_CHART_NAME) \
 			--set kubeletPlugin.fullCardAndTraditionalVNPU.enabled=true \
 			> "$$rendered/full-card-and-traditional-vnpu.yaml"; \
 		grep -Fq -- '--feature-gates=HAMivNPUCore=false' \
-			"$$rendered/full-card-and-traditional-vnpu.yaml"
+			"$$rendered/full-card-and-traditional-vnpu.yaml"; \
+		if grep -Fq -- 'name: npu-hamivnpucore.project-hami.io' "$$rendered/full-card-and-traditional-vnpu.yaml"; then \
+			echo 'HAMivNPUCore DeviceClass must not be installed in traditional vNPU mode' >&2; \
+			exit 1; \
+		fi
 
 verify-helm-release-path:
 	@set -eu; \
