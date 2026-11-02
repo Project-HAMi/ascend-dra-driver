@@ -113,7 +113,11 @@ collection success; `ascend_dra_monitor_last_success_timestamp_seconds` records
 the last successful refresh. `ascend_dra_monitor_domains` counts states
 `pending`, `ready`, `unmapped`, `ambiguous`, `invalid`, `stale`, `unsupported`.
 Pending initialization is normal; read/association errors are not converted to
-zero usage. Samples expire after `maxAge`. A successful HTTP response, an
+zero usage. Samples expire after `maxAge`. Each scrape also checks the age of
+the last successful PodResources ownership lookup: expired ownership hides
+container samples and marks supported domains stale, even while sampling is
+blocked or SHM remains fresh. Host samples retain their own expiry checks.
+A successful HTTP response, an
 initialized domain, or a `ready` observation does not prove complete Hook
 coverage or continued resource-isolation health.
 

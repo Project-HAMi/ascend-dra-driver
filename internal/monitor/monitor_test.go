@@ -361,6 +361,90 @@ func TestWorkloadFailureExpiresAndDoesNotInventConsumers(t *testing.T) {
 	require.NotContains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
 }
 
+func TestCollectChecksWorkloadOwnershipAge(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		age              time.Duration
+		missingTimestamp bool
+		blockedRefresh   bool
+		expired          bool
+	}{
+		{name: "at_max_age", age: 15 * time.Second},
+		{name: "past_max_age", age: 15*time.Second + time.Nanosecond, expired: true},
+		{name: "missing_timestamp", age: 14 * time.Second, missingTimestamp: true, expired: true},
+		{name: "blocked_refresh", age: 15*time.Second + time.Nanosecond, blockedRefresh: true, expired: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, prepared, _, start := sampleMonitor(t)
+			unsupported := prepared.Domains[0]
+			unsupported.ClaimUID, unsupported.Supported = "unsupported", false
+			prepared.Domains = append(prepared.Domains, unsupported)
+			m.refresh(context.Background(), start)
+			resolve := m.src.Workloads
+			m.src.Workloads = func(context.Context) (map[string][]Consumer, error) {
+				return nil, errors.New("PodResources unavailable")
+			}
+			// Refresh SHM and hardware while the cached ownership is still valid.
+			// The next scrape must use ownership age, not these new sample ages.
+			m.host.at = start.Add(14 * time.Second)
+			m.refresh(context.Background(), m.host.at)
+			if tc.missingTimestamp {
+				delete(m.c.current.last, "workload")
+			}
+			if tc.blockedRefresh {
+				entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+				snapshot := m.src.Prepared
+				m.src.Prepared = func() (PreparedSnapshot, error) {
+					close(entered)
+					<-release
+					return snapshot()
+				}
+				go func() {
+					defer close(done)
+					m.refresh(context.Background(), start.Add(15*time.Second))
+				}()
+				t.Cleanup(func() { close(release); <-done })
+				<-entered
+			}
+			m.c.now = func() time.Time { return start.Add(tc.age) }
+			assertMetrics := func(expired bool) {
+				t.Helper()
+				output := gather(t, m.c)
+				require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
+				require.Contains(t, output, "hami_host_gpu_utilization_ratio")
+				for _, name := range []string{
+					"hami_vgpu_memory_used_bytes", "hami_vgpu_memory_limit_bytes",
+					"hami_container_device_utilization_ratio", "hami_vgpu_memory_context_bytes",
+					"hami_vgpu_memory_module_bytes", "hami_vgpu_memory_buffer_bytes",
+				} {
+					if expired {
+						require.NotContains(t, output, name)
+					} else {
+						require.Contains(t, output, name)
+					}
+				}
+				ready, stale := 1, 0
+				if expired {
+					ready, stale = 0, 1
+				}
+				expected := "# HELP ascend_dra_monitor_domains Number of prepared physical-card domains by observation state\n# TYPE ascend_dra_monitor_domains gauge\n"
+				for _, state := range states {
+					count := map[string]int{"ready": ready, "stale": stale, "unsupported": 1}[state]
+					expected += fmt.Sprintf("ascend_dra_monitor_domains{state=%q} %d\n", state, count)
+				}
+				require.NoError(t, testutil.CollectAndCompare(m.c, strings.NewReader(expected), "ascend_dra_monitor_domains"))
+			}
+			assertMetrics(tc.expired)
+			if !tc.blockedRefresh {
+				m.src.Workloads = resolve
+				m.host.at = start.Add(tc.age)
+				m.refresh(context.Background(), m.host.at)
+				assertMetrics(false)
+			}
+		})
+	}
+}
+
 func TestHTTPClosesAndBlockedHardwareDoesNotSpawnReplacements(t *testing.T) {
 	var calls atomic.Int32
 	blocked := make(chan struct{})

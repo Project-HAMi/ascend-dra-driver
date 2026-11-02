@@ -77,6 +77,9 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	o := c.current
 	c.RUnlock()
 	now := c.now()
+	// Fresh SHM samples do not extend the lifetime of their cached ownership.
+	workloadAt := o.last["workload"]
+	workloadFresh := !workloadAt.IsZero() && now.Sub(workloadAt) <= c.maxAge
 	versions := make(map[string]uint64)
 	generation := func(d *domainObservation) uint64 {
 		if v, ok := versions[d.claimUID]; ok {
@@ -87,7 +90,7 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		return v
 	}
 	for _, s := range o.samples {
-		if now.Sub(s.at) > c.maxAge || (s.domain != nil && (s.domain.generation == 0 || generation(s.domain) != s.domain.generation)) {
+		if now.Sub(s.at) > c.maxAge || (s.domain != nil && (!workloadFresh || s.domain.generation == 0 || generation(s.domain) != s.domain.generation)) {
 			continue
 		}
 		ch <- prometheus.MustNewConstMetric(business[s.desc], prometheus.GaugeValue, s.value, s.labels...)
@@ -111,7 +114,7 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			continue // Unprepare removes this domain from the prepared counts.
 		}
 		state := d.state
-		if now.Sub(o.at) > c.maxAge || v != d.generation {
+		if now.Sub(o.at) > c.maxAge || v != d.generation || (!workloadFresh && state != "unsupported") {
 			state = "stale"
 		}
 		counts[state]++
