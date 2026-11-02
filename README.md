@@ -34,6 +34,14 @@ helm upgrade --install ascend-dra-driver \
 
 This setting disables the `HAMivNPUCore` feature gate.
 
+## Monitoring
+
+HAMivNPUCore mode provides a built-in `/metrics` endpoint on port 9395, with
+Device Plugin compatible per-container core memory accounting and quotas, plus
+whole-device memory and AICore utilization. See the [chart monitoring and runtime
+upgrade guide](deployments/helm/ascend-dra-driver/README.md) for metric semantics,
+Prometheus discovery, configuration and the required legacy-core migration.
+
 ## Demo
 
 The Kind demo shows how to deploy the driver and allocate Ascend NPUs with a `ResourceClaim`. On an ARM64 Ascend host, configure the physical card IDs in [`demo/kind-vnpu/demo.env`](demo/kind-vnpu/demo.env), then run:
@@ -64,6 +72,11 @@ go test ./cmd/ascend-dra-kubeletplugin \
   -run 'TestMockDRA|TestMockDRALibvNPU' -v
 make verify-helm-chart
 ```
+
+For unit-only validation before e2e review, use `make test-unit`. It excludes
+the `TestMockDRA*` e2e lifecycle cases and runs the core-reader, collector,
+association, runtime compatibility, asset installation and chart render tests.
+The Kind/hardware demo and mocked e2e lifecycle suite can be run after review.
 
 Build libvnpu in an environment with the required Ascend development libraries, then build the driver image:
 

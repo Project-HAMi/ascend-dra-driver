@@ -55,6 +55,7 @@ jobs:
               - 'hami-vnpu-core/**'
               - 'third_party/**'
               - 'deployments/container/**'
+              - 'scripts/**'
               - '.github/actions/**'
               - '.github/workflows/ci.yml'
 
@@ -95,7 +96,7 @@ jobs:
         with:
           version: v2.12.2
           install-mode: goinstall
-          args: --timeout=10m ./api/... ./cmd/... ./pkg/...
+          args: --timeout=10m ./api/... ./cmd/... ./pkg/... ./internal/...
 
   test:
     name: Unit test
@@ -150,16 +151,7 @@ jobs:
           workspaces: hami-vnpu-core
 
       - name: Build libvnpu artifacts
-        run: cargo build --release
-        working-directory: hami-vnpu-core
-
-      - name: Prepare libvnpu artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/hami-vnpu-core
-          cp hami-vnpu-core/target/release/libvnpu.so dist/hami-vnpu-core/
-          echo "/hami-vnpu-core/libvnpu.so" > dist/hami-vnpu-core/ld.so.preload
+        run: make libvnpu-artifacts
 
       - name: Upload libvnpu artifacts
         uses: actions/upload-artifact@v7.0.1

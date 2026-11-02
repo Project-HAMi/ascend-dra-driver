@@ -5,6 +5,11 @@ metadata:
   name: {{ include "ascend-dra-driver.fullname" . }}-role
   namespace: {{ include "ascend-dra-driver.namespace" . }}
 rules:
+{{- if and .Values.kubeletPlugin.metrics.enabled (not .Values.kubeletPlugin.fullCardAndTraditionalVNPU.enabled) }}
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+{{- end }}
 - apiGroups: ["resource.k8s.io"]
   resources: ["resourceclaims"]
   verbs: ["create", "get"]

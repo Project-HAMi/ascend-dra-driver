@@ -1,0 +1,27 @@
+{{- if and .Values.kubeletPlugin.metrics.enabled .Values.kubeletPlugin.metrics.serviceMonitor.enabled (not .Values.kubeletPlugin.fullCardAndTraditionalVNPU.enabled) }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ascend-dra-driver.fullname" . }}-metrics
+  namespace: {{ include "ascend-dra-driver.namespace" . }}
+  labels:
+    {{- include "ascend-dra-driver.labels" . | nindent 4 }}
+    {{- with .Values.kubeletPlugin.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "ascend-dra-driver.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+    - {{ include "ascend-dra-driver.namespace" . }}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .Values.kubeletPlugin.metrics.serviceMonitor.interval }}
+    honorLabels: true
+    relabelings:
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node
+{{- end }}

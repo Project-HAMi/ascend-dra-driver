@@ -45,6 +45,15 @@ controller:
       resources: {}
 
 kubeletPlugin:
+  metrics:
+    enabled: true
+    port: 9395
+    collectionInterval: 5s
+    maxAge: 15s
+    serviceMonitor:
+      enabled: false
+      labels: {}
+      interval: 15s
   priorityClassName: "system-node-critical"
   # HAMivNPUCore consumable-capacity sharing is the default and currently
   # validated allocation mode.

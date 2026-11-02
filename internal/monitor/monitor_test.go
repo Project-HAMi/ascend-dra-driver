@@ -1,0 +1,297 @@
+// Copyright 2026 The HAMi Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+package monitor
+
+import (
+	"context"
+	"encoding/binary"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/require"
+)
+
+func sampleMonitor(t *testing.T) (*Monitor, *PreparedSnapshot, *map[string][]Consumer, time.Time) {
+	t.Helper()
+	now := time.Unix(1234567890, 0)
+	d := Domain{ClaimUID: "claim", Pool: "node", Device: "npu-1-0", PhysicalID: 3, UUID: "uuid-3", MemoryLimit: 1 << 30, Supported: true}
+	p := &PreparedSnapshot{Generation: 1, Domains: []Domain{d}}
+	w := map[string][]Consumer{"claim": {{Namespace: "ns", Pod: "pod", PodUID: "pod-uid", Container: "app", Devices: map[DeviceRef]bool{{Pool: "node", Device: "npu-1-0"}: true}}}}
+	m := &Monitor{
+		config: Config{ClaimsRoot: t.TempDir(), Interval: time.Second, MaxAge: 15 * time.Second},
+		last:   map[string]time.Time{"devices": now}, reported: make(map[string]string), hostOK: true,
+		host: hostResult{at: now, devices: []HostDevice{{LogicalID: 1, PhysicalID: 3, UUID: "uuid-3", Type: "910B", MemoryUsed: 2 << 30, Utilization: 73, MemoryValid: true, UtilValid: true}}},
+	}
+	m.src = Sources{
+		Prepared: func() (PreparedSnapshot, error) { return *p, nil }, Generation: func() uint64 { return p.Generation },
+		Workloads: func(context.Context) (map[string][]Consumer, error) { return w, nil },
+	}
+	m.c = &collector{maxAge: m.config.MaxAge, generation: m.src.Generation, now: func() time.Time { return now }}
+	data := coreFixture()
+	setSlot(data, 0, 11, 4096, 1)
+	setSlot(data, 1, 22, 8192, 1)
+	writeDomain(t, m.config.ClaimsRoot, d, data)
+	return m, p, &w, now
+}
+
+func gather(t *testing.T, c prometheus.Collector) string {
+	t.Helper()
+	reg := prometheus.NewPedanticRegistry()
+	require.NoError(t, reg.Register(c))
+	families, err := reg.Gather()
+	require.NoError(t, err)
+	var b strings.Builder
+	for _, f := range families {
+		b.WriteString(f.GetName())
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func TestMetricsMatchDevicePluginContract(t *testing.T) {
+	m, _, _, now := sampleMonitor(t)
+	m.refresh(context.Background(), now)
+	const labels = `container="app",device_uuid="uuid-3",namespace="ns",pod="pod",vdevice_index="3"`
+	const host = `device_index="1",device_type="Ascend-910B",device_uuid="uuid-3"`
+	expected := `
+# HELP hami_host_gpu_memory_used_bytes GPU device memory usage in bytes
+# TYPE hami_host_gpu_memory_used_bytes gauge
+hami_host_gpu_memory_used_bytes{` + host + `} 2.147483648e+09
+# HELP hami_host_gpu_utilization_ratio GPU core utilization ratio (0-100)
+# TYPE hami_host_gpu_utilization_ratio gauge
+hami_host_gpu_utilization_ratio{` + host + `} 73
+# HELP hami_vgpu_memory_used_bytes vGPU device memory usage in bytes
+# TYPE hami_vgpu_memory_used_bytes gauge
+hami_vgpu_memory_used_bytes{` + labels + `} 12288
+# HELP hami_vgpu_memory_limit_bytes vGPU device memory limit in bytes
+# TYPE hami_vgpu_memory_limit_bytes gauge
+hami_vgpu_memory_limit_bytes{` + labels + `} 1.073741824e+09
+# HELP hami_container_device_utilization_ratio Container device SM utilization ratio
+# TYPE hami_container_device_utilization_ratio gauge
+hami_container_device_utilization_ratio{` + labels + `} 73
+# HELP hami_vgpu_memory_context_bytes Container device memory context size in bytes
+# TYPE hami_vgpu_memory_context_bytes gauge
+hami_vgpu_memory_context_bytes{` + labels + `} 0
+# HELP hami_vgpu_memory_module_bytes Container device memory module size in bytes
+# TYPE hami_vgpu_memory_module_bytes gauge
+hami_vgpu_memory_module_bytes{` + labels + `} 0
+# HELP hami_vgpu_memory_buffer_bytes Container device memory buffer size in bytes
+# TYPE hami_vgpu_memory_buffer_bytes gauge
+hami_vgpu_memory_buffer_bytes{` + labels + `} 0
+`
+	names := []string{}
+	for _, name := range []string{"host_gpu_memory_used_bytes", "host_gpu_utilization_ratio", "vgpu_memory_used_bytes", "vgpu_memory_limit_bytes", "container_device_utilization_ratio", "vgpu_memory_context_bytes", "vgpu_memory_module_bytes", "vgpu_memory_buffer_bytes"} {
+		names = append(names, "hami_"+name)
+	}
+	require.NoError(t, testutil.CollectAndCompare(m.c, strings.NewReader(expected), names...))
+	require.Equal(t, 1, m.c.current.counts["ready"])
+}
+
+func TestUniqueConsumerConstraintAndRepeatedReferences(t *testing.T) {
+	m, _, w, now := sampleMonitor(t)
+	(*w)["claim"] = append((*w)["claim"], (*w)["claim"][0])
+	m.refresh(context.Background(), now)
+	require.Equal(t, 1, m.c.current.counts["ready"], "same container with repeated references is one consumer")
+	second := (*w)["claim"][0]
+	second.Container = "other"
+	(*w)["claim"] = append((*w)["claim"], second)
+	m.refresh(context.Background(), now)
+	require.Equal(t, 1, m.c.current.counts["ambiguous"])
+	output := gather(t, m.c)
+	require.NotContains(t, output, "hami_vgpu_memory_used_bytes")
+	require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
+}
+
+func TestPendingInvalidAndStaleSamplesAreNotZero(t *testing.T) {
+	m, p, _, now := sampleMonitor(t)
+	p.Domains[0].PhysicalID = 4 // Missing identity must not silently reuse physical 3.
+	m.refresh(context.Background(), now)
+	require.Equal(t, 1, m.c.current.counts["stale"])
+	p.Domains[0].PhysicalID = 3
+	p.Domains[0].ClaimUID = "not-started"
+	consumers := m.workloads["claim"]
+	m.src.Workloads = func(context.Context) (map[string][]Consumer, error) {
+		return map[string][]Consumer{"not-started": consumers}, nil
+	}
+	m.refresh(context.Background(), now)
+	require.Equal(t, 1, m.c.current.counts["pending"])
+	require.NotContains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
+	writeDomain(t, m.config.ClaimsRoot, p.Domains[0], []byte{1})
+	m.refresh(context.Background(), now)
+	require.Equal(t, 1, m.c.current.counts["pending"])
+}
+
+func TestShortFileGraceExpiresAndRecoversWithoutCachedUsage(t *testing.T) {
+	m, p, _, now := sampleMonitor(t)
+	m.refresh(context.Background(), now)
+	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
+	writeDomain(t, m.config.ClaimsRoot, p.Domains[0], []byte{1})
+	for _, elapsed := range []time.Duration{0, m.config.Interval / 2, m.config.Interval} {
+		m.refresh(context.Background(), now.Add(elapsed))
+		output := gather(t, m.c)
+		require.NotContains(t, output, "hami_vgpu_")
+		require.NotContains(t, output, "hami_container_")
+		require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
+		if elapsed < m.config.Interval {
+			require.Equal(t, 1, m.c.current.counts["pending"])
+			require.True(t, m.c.current.ok["shmem"])
+		}
+	}
+	require.Equal(t, 1, m.c.current.counts["invalid"])
+	require.False(t, m.c.current.ok["shmem"])
+	data := coreFixture()
+	setSlot(data, 0, 11, 4096, 1)
+	writeDomain(t, m.config.ClaimsRoot, p.Domains[0], data)
+	m.refresh(context.Background(), now.Add(2*m.config.Interval))
+	require.Equal(t, 1, m.c.current.counts["ready"])
+	require.True(t, m.c.current.ok["shmem"])
+	expected := `
+# HELP hami_vgpu_memory_used_bytes vGPU device memory usage in bytes
+# TYPE hami_vgpu_memory_used_bytes gauge
+hami_vgpu_memory_used_bytes{container="app",device_uuid="uuid-3",namespace="ns",pod="pod",vdevice_index="3"} 4096
+`
+	require.NoError(t, testutil.CollectAndCompare(m.c, strings.NewReader(expected), "hami_vgpu_memory_used_bytes"))
+	writeDomain(t, m.config.ClaimsRoot, p.Domains[0], []byte{1})
+	m.refresh(context.Background(), now.Add(3*m.config.Interval))
+	require.Equal(t, 1, m.c.current.counts["pending"], "a recovered file must not retain its previous failure history")
+}
+
+func TestGenerationRemovalAndFreshnessSuppressOldSeries(t *testing.T) {
+	m, p, _, now := sampleMonitor(t)
+	m.refresh(context.Background(), now)
+	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
+	p.Generation++
+	output := gather(t, m.c)
+	require.NotContains(t, output, "hami_vgpu_")
+	require.NotContains(t, output, "hami_container_")
+	require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
+	require.Contains(t, output, "hami_host_gpu_utilization_ratio")
+	expected := `
+# HELP ascend_dra_monitor_domains Number of prepared physical-card domains by observation state
+# TYPE ascend_dra_monitor_domains gauge
+ascend_dra_monitor_domains{state="pending"} 0
+ascend_dra_monitor_domains{state="ready"} 0
+ascend_dra_monitor_domains{state="unmapped"} 0
+ascend_dra_monitor_domains{state="ambiguous"} 0
+ascend_dra_monitor_domains{state="invalid"} 0
+ascend_dra_monitor_domains{state="stale"} 1
+ascend_dra_monitor_domains{state="unsupported"} 0
+`
+	require.NoError(t, testutil.CollectAndCompare(m.c, strings.NewReader(expected), "ascend_dra_monitor_domains"))
+	p.Domains = nil
+	m.refresh(context.Background(), now)
+	require.NotContains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
+	m.c.now = func() time.Time { return now.Add(time.Minute) }
+	require.NotContains(t, gather(t, m.c), "hami_host_gpu_memory_used_bytes")
+}
+
+func TestLabelCollisionSuppressesBothClaims(t *testing.T) {
+	m, p, w, now := sampleMonitor(t)
+	d := p.Domains[0]
+	d.ClaimUID = "second"
+	p.Domains = append(p.Domains, d)
+	(*w)["second"] = (*w)["claim"]
+	m.refresh(context.Background(), now)
+	require.Equal(t, 2, m.c.current.counts["ambiguous"])
+	require.NotContains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
+}
+
+func TestMultipleCardsAndIndependentClaimsKeepTheirAccounting(t *testing.T) {
+	m, p, w, now := sampleMonitor(t)
+	secondCard := p.Domains[0]
+	secondCard.Device, secondCard.PhysicalID, secondCard.UUID = "npu-0-0", 7, "uuid-7"
+	p.Domains = append(p.Domains, secondCard)
+	(*w)["claim"][0].Devices[DeviceRef{Pool: "node", Device: secondCard.Device}] = true
+	m.host.devices = append(m.host.devices, HostDevice{LogicalID: 0, PhysicalID: 7, UUID: "uuid-7", Type: "910B", MemoryValid: true, UtilValid: true})
+	data := coreFixture()
+	setSlot(data, 0, 11, 32768, 1)
+	writeDomain(t, m.config.ClaimsRoot, secondCard, data)
+	other := p.Domains[0]
+	other.ClaimUID, other.MemoryLimit = "other-claim", 2<<30
+	p.Domains = append(p.Domains, other)
+	consumer := (*w)["claim"][0]
+	consumer.Pod, consumer.PodUID = "other-pod", "other-pod-uid"
+	(*w)["other-claim"] = []Consumer{consumer}
+	data = coreFixture()
+	binary.LittleEndian.PutUint64(data, 2<<30)
+	writeDomain(t, m.config.ClaimsRoot, other, data)
+	m.refresh(context.Background(), now)
+	require.Equal(t, 3, m.c.current.counts["ready"])
+	expected := `
+# HELP hami_vgpu_memory_used_bytes vGPU device memory usage in bytes
+# TYPE hami_vgpu_memory_used_bytes gauge
+hami_vgpu_memory_used_bytes{container="app",device_uuid="uuid-3",namespace="ns",pod="pod",vdevice_index="3"} 12288
+hami_vgpu_memory_used_bytes{container="app",device_uuid="uuid-7",namespace="ns",pod="pod",vdevice_index="7"} 32768
+hami_vgpu_memory_used_bytes{container="app",device_uuid="uuid-3",namespace="ns",pod="other-pod",vdevice_index="3"} 0
+`
+	require.NoError(t, testutil.CollectAndCompare(m.c, strings.NewReader(expected), "hami_vgpu_memory_used_bytes"))
+}
+
+func TestGenerationChangeDuringSamplingCannotPublishRemovedDomain(t *testing.T) {
+	m, p, _, now := sampleMonitor(t)
+	prepared := m.src.Prepared
+	m.src.Prepared = func() (PreparedSnapshot, error) {
+		snapshot, err := prepared()
+		p.Generation++
+		return snapshot, err
+	}
+	m.refresh(context.Background(), now)
+	output := gather(t, m.c)
+	require.NotContains(t, output, "hami_vgpu_")
+	require.NotContains(t, output, "hami_container_")
+	require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
+	require.Contains(t, output, "hami_host_gpu_utilization_ratio")
+	m.src.Prepared = prepared
+	m.refresh(context.Background(), now)
+	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes", "a fresh generation must resume collection")
+}
+
+func TestWorkloadFailureExpiresAndDoesNotInventConsumers(t *testing.T) {
+	m, _, _, now := sampleMonitor(t)
+	m.refresh(context.Background(), now)
+	m.src.Workloads = func(context.Context) (map[string][]Consumer, error) { return nil, errors.New("unavailable") }
+	m.refresh(context.Background(), now.Add(time.Second))
+	require.False(t, m.c.current.ok["workload"])
+	m.refresh(context.Background(), now.Add(time.Minute))
+	require.NotContains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
+}
+
+func TestHTTPClosesAndBlockedHardwareDoesNotSpawnReplacements(t *testing.T) {
+	var calls atomic.Int32
+	blocked := make(chan struct{})
+	defer close(blocked)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src := Sources{
+		Prepared: func() (PreparedSnapshot, error) { return PreparedSnapshot{}, nil }, Generation: func() uint64 { return 0 },
+		Workloads: func(context.Context) (map[string][]Consumer, error) { return nil, nil },
+		Host:      func(context.Context) ([]HostDevice, error) { calls.Add(1); <-blocked; return nil, nil },
+	}
+	cfg := Config{BindAddress: "127.0.0.1:0", ClaimsRoot: t.TempDir(), Interval: 5 * time.Millisecond, MaxAge: time.Second}
+	m, err := Start(ctx, cfg, src)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return calls.Load() == 1 }, time.Second, time.Millisecond)
+	client := &http.Client{Timeout: time.Second}
+	response, err := client.Get("http://" + m.Address() + "/metrics")
+	require.NoError(t, err)
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	require.Contains(t, string(body), "ascend_dra_monitor_source_success")
+	require.NotContains(t, string(body), "go_goroutines")
+	require.Equal(t, int32(1), calls.Load())
+	closeCtx, stop := context.WithTimeout(context.Background(), time.Second)
+	defer stop()
+	require.NoError(t, m.Close(closeCtx))
+	_, err = client.Get("http://" + m.Address() + "/metrics")
+	require.Error(t, err)
+}

@@ -77,17 +77,18 @@ for pod in npu-share-a npu-share-b; do
     if [[ "${expected_device_count}" -eq 2 ]]; then
       test "${visible_devices[0]}" != "${visible_devices[1]}"
     fi
-    test "$NPU_MEM_QUOTA" = "1024"
-    test "$NPU_PRIORITY" = "50"
+    test "$NPU_MEMORY_LIMIT_MB" = "1024"
+    test "$NPU_COMPUTE_LIMIT" = "50"
+    test "$NPU_SCHED_POLICY" = "dynamic"
     test "$NPU_GLOBAL_SHM_PATH" = \
-      "/hami-shared-region/${visible_devices[0]}_global_registry"
+      "/hami-shared-region/global_registry"
     test "$NPU_LOCAL_SHM_PATH" = \
       "/hami-vnpu-shmem/vnpu_local_shmem"
 
     test -f /hami-vnpu-core/libvnpu.so
     test ! -e /hami-vnpu-core/limiter
-    test -f /hami-vnpu-shmem/vnpu_local_shmem
-    test -f "${NPU_GLOBAL_SHM_PATH}"
+    test -f "/hami-vnpu-shmem/vnpu_local_shmem.device-${visible_devices[0]}"
+    test -f "${NPU_GLOBAL_SHM_PATH}.device-${visible_devices[0]}"
     grep -Fx /hami-vnpu-core/libvnpu.so /etc/ld.so.preload
     grep -q /hami-vnpu-core/libvnpu.so /proc/1/maps
 
@@ -122,10 +123,10 @@ export UID_A UID_B
 printf 'uid_a=%s\nuid_b=%s\n' "${UID_A}" "${UID_B}" |
   tee "${DEMO_STATE_DIR}/claim-uids.txt"
 
-docker exec "${WORKER}" test -f \
-  "/usr/local/hami-vnpu-core/containers/${UID_A}/vnpu_local_shmem"
-docker exec "${WORKER}" test -f \
-  "/usr/local/hami-vnpu-core/containers/${UID_B}/vnpu_local_shmem"
+docker exec "${WORKER}" sh -c \
+  'find "/usr/local/hami-vnpu-core/containers/$1" -name "vnpu_local_shmem.device-*" | grep -q .' -- "${UID_A}"
+docker exec "${WORKER}" sh -c \
+  'find "/usr/local/hami-vnpu-core/containers/$1" -name "vnpu_local_shmem.device-*" | grep -q .' -- "${UID_B}"
 docker exec "${WORKER}" sh -c \
   "grep -R -l '${UID_A}' /var/run/cdi | xargs -r cat" \
   > "${DEMO_STATE_DIR}/claim-a-cdi.yaml"

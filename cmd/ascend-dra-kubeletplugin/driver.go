@@ -21,6 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"time"
+
+	"github.com/Project-HAMi/hami-dra-driver/internal/monitor"
+	"github.com/Project-HAMi/hami-dra-driver/pkg/featuregates"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,6 +40,7 @@ type driver struct {
 	helper      pluginHelper
 	state       *DeviceState
 	healthcheck *healthcheck
+	metrics     *monitor.Monitor
 	cancelCtx   func(error)
 	nodeName    string
 }
@@ -76,20 +81,34 @@ func NewDriver(ctx context.Context, config *Config) (*driver, error) {
 
 	driver.healthcheck, err = startHealthcheck(ctx, config)
 	if err != nil {
+		_ = driver.Shutdown(klog.FromContext(ctx))
 		return nil, fmt.Errorf("start healthcheck: %w", err)
+	}
+	if featuregates.Enabled(featuregates.HAMivNPUCore) && config.flags.metricsBindAddress != "" {
+		driver.metrics, err = startMetrics(ctx, config, state)
+		if err != nil {
+			_ = driver.Shutdown(klog.FromContext(ctx))
+			return nil, fmt.Errorf("start metrics: %w", err)
+		}
 	}
 
 	return driver, nil
 }
 
 func (d *driver) Shutdown(logger klog.Logger) error {
+	var metricsErr error
+	if d.metrics != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		metricsErr = d.metrics.Close(ctx)
+		cancel()
+	}
 	if d.healthcheck != nil {
 		d.healthcheck.Stop(logger)
 	}
 	if d.helper != nil {
 		d.helper.Stop()
 	}
-	return nil
+	return metricsErr
 }
 
 func (d *driver) PrepareResourceClaims(ctx context.Context, claims []*resourceapi.ResourceClaim) (map[types.UID]kubeletplugin.PrepareResult, error) {
@@ -158,6 +177,7 @@ func (d *driver) HandleError(ctx context.Context, err error, msg string) {
 }
 
 func (d *driver) syncAllocatable() {
+	d.state.Lock()
 	// Clean up allocatable devices that are no longer available.
 	deviceNames := d.getAvailableDeviceNames()
 	availableMap := make(map[string]struct{}, len(deviceNames))
@@ -173,8 +193,9 @@ func (d *driver) syncAllocatable() {
 	// Publish updated allocatable resources.
 	devices := make([]resourceapi.Device, 0, len(d.state.allocatable))
 	for device := range maps.Values(d.state.allocatable) {
-		devices = append(devices, device)
+		devices = append(devices, *device.DeepCopy())
 	}
+	d.state.Unlock()
 
 	resources := resourceslice.DriverResources{
 		Pools: map[string]resourceslice.Pool{

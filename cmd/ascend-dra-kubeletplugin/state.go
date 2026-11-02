@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -42,7 +43,7 @@ type (
 )
 
 const (
-	defaultLibvNPUHostPath                                   = "/usr/local/hami-vnpu-core"
+	defaultLibvNPUHostPath                                   = consts.CoreHostRoot
 	libvNPULocalShmemContainerPath                           = "/hami-vnpu-shmem"
 	libvNPULocalShmemFileName                                = "vnpu_local_shmem"
 	physicalIDAttributeName        resourceapi.QualifiedName = consts.DeviceAttributePhysicalID
@@ -113,6 +114,9 @@ func (pds PreparedDevices) GetDevices() []*drapbv1.Device {
 
 type DeviceState struct {
 	sync.Mutex
+	monitorGeneration atomic.Uint64
+	prepared          PreparedClaims
+	manager           *AscendManager
 	cdi               *CDIHandler
 	allocatable       AllocatableDevices
 	checkpointManager checkpointmanager.CheckpointManager
@@ -121,7 +125,11 @@ type DeviceState struct {
 }
 
 func NewDeviceState(config *Config) (*DeviceState, error) {
-	allocatable, vnpuManager, err := enumerateAllPossibleDevices()
+	manager, err := NewAscendManager()
+	if err != nil {
+		return nil, err
+	}
+	allocatable, vnpuManager, err := enumerateAllPossibleDevices(manager)
 	if err != nil {
 		return nil, fmt.Errorf("error enumerating all possible devices: %v", err)
 	}
@@ -142,6 +150,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 	}
 
 	state := &DeviceState{
+		manager:           manager,
 		cdi:               cdi,
 		allocatable:       allocatable,
 		checkpointManager: checkpointManager,
@@ -164,6 +173,14 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 
 	for _, c := range checkpoints {
 		if c == DriverPluginCheckpointFile {
+			checkpoint := newCheckpoint()
+			if err := state.checkpointManager.GetCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
+				return nil, fmt.Errorf("restore prepared claims: %w", err)
+			}
+			if checkpoint.V1 == nil {
+				return nil, fmt.Errorf("checkpoint has no prepared claim state")
+			}
+			state.prepared = checkpoint.V1.PreparedClaims
 			if vnpuManager != nil {
 				if err := CreatePredefinedDeviceClasses(vnpuManager); err != nil {
 					log.Printf("Failed to create predefined DeviceClasses: %v", err)
@@ -177,6 +194,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 	if err := state.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
 		return nil, fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
+	state.prepared = checkpoint.V1.PreparedClaims
 	if vnpuManager != nil {
 		go func() {
 			if err := CreatePredefinedDeviceClasses(vnpuManager); err != nil {
@@ -190,6 +208,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Device, error) {
 	s.Lock()
 	defer s.Unlock()
+	defer s.monitorGeneration.Add(1)
 
 	claimUID := string(claim.UID)
 
@@ -200,7 +219,11 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 	preparedClaims := checkpoint.V1.PreparedClaims
 
 	if preparedClaims[claimUID] != nil {
+		s.prepared = preparedClaims
 		if featuregates.Enabled(featuregates.HAMivNPUCore) {
+			if _, ok := preparedCoreQuota(preparedClaims[claimUID]); !ok {
+				return nil, fmt.Errorf("claim %s has incompatible prepared core configuration; stop its workload and Unprepare before preparing again", claimUID)
+			}
 			if _, err := s.ensureLibvNPUClaimLocalShmemDir(claimUID); err != nil {
 				return nil, err
 			}
@@ -255,6 +278,7 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 		return nil, fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
 	keepLocalShmemDir = true
+	s.prepared = preparedClaims
 
 	return preparedClaims[claimUID].GetDevices(), nil
 }
@@ -262,6 +286,7 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 func (s *DeviceState) Unprepare(claimUID string) error {
 	s.Lock()
 	defer s.Unlock()
+	defer s.monitorGeneration.Add(1)
 
 	checkpoint := newCheckpoint()
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
@@ -269,6 +294,7 @@ func (s *DeviceState) Unprepare(claimUID string) error {
 	}
 	preparedClaims := checkpoint.V1.PreparedClaims
 	if preparedClaims[claimUID] == nil {
+		s.prepared = preparedClaims
 		if featuregates.Enabled(featuregates.HAMivNPUCore) {
 			return s.removeLibvNPUClaimLocalShmemDir(claimUID)
 		}
@@ -288,6 +314,7 @@ func (s *DeviceState) Unprepare(claimUID string) error {
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
 		return fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
+	s.prepared = preparedClaims
 
 	if featuregates.Enabled(featuregates.HAMivNPUCore) {
 		return s.removeLibvNPUClaimLocalShmemDir(claimUID)
@@ -529,7 +556,6 @@ func (s *DeviceState) applyLibvNPUConfig(
 	libvNPUEdits, err := buildLibvNPUCDIContainerEdits(
 		memoryBytes,
 		priority,
-		allocatedDeviceIDs[0],
 		localShmemDir,
 	)
 	if err != nil {
@@ -612,8 +638,11 @@ func validateAllocationResultForLibvNPU(results []*resourceapi.DeviceRequestAllo
 
 func buildLibvNPUCDIContainerEdits(
 	memoryBytes, priority int64,
-	deviceID, localShmemDir string,
+	localShmemDir string,
 ) (*cdispec.ContainerEdits, error) {
+	if memoryBytes <= 0 || memoryBytes%(1024*1024) != 0 || priority < 1 || priority > 100 {
+		return nil, fmt.Errorf("core requires a positive whole-MiB quota and cores in [1,100]")
+	}
 	if localShmemDir == "" {
 		return nil, fmt.Errorf("local vNPU shared-memory directory is empty")
 	}
@@ -631,12 +660,12 @@ func buildLibvNPUCDIContainerEdits(
 		})
 	}
 	mounts = append(mounts, &cdispec.Mount{
-		HostPath:      "/usr/local/hami-vnpu-core",
+		HostPath:      consts.CoreRuntimePath,
 		ContainerPath: "/hami-vnpu-core",
 		Options:       []string{"ro", "bind"},
 	})
 	mounts = append(mounts, &cdispec.Mount{
-		HostPath:      "/usr/local/hami-vnpu-core/ld.so.preload",
+		HostPath:      consts.CoreRuntimePath + "/ld.so.preload",
 		ContainerPath: "/etc/ld.so.preload",
 		Options:       []string{"ro", "bind"},
 	})
@@ -652,9 +681,10 @@ func buildLibvNPUCDIContainerEdits(
 	})
 	return &cdispec.ContainerEdits{
 		Env: []string{
-			fmt.Sprintf("NPU_MEM_QUOTA=%d", memoryBytes/1024/1024),
-			fmt.Sprintf("NPU_PRIORITY=%d", priority),
-			fmt.Sprintf("NPU_GLOBAL_SHM_PATH=/hami-shared-region/%s_global_registry", deviceID),
+			fmt.Sprintf("NPU_MEMORY_LIMIT_MB=%d", memoryBytes/1024/1024),
+			fmt.Sprintf("NPU_COMPUTE_LIMIT=%d", priority),
+			"NPU_SCHED_POLICY=dynamic",
+			"NPU_GLOBAL_SHM_PATH=/hami-shared-region/global_registry",
 			fmt.Sprintf(
 				"NPU_LOCAL_SHM_PATH=%s/%s",
 				libvNPULocalShmemContainerPath,

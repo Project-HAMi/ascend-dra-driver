@@ -19,3 +19,27 @@
 {{- if not (kindIs "bool" .Values.kubeletPlugin.fullCardAndTraditionalVNPU.enabled) }}
 {{- fail "kubeletPlugin.fullCardAndTraditionalVNPU.enabled must be a boolean" }}
 {{- end }}
+
+{{- if not (kindIs "bool" .Values.kubeletPlugin.metrics.enabled) }}
+{{- fail "kubeletPlugin.metrics.enabled must be a boolean" }}
+{{- end }}
+{{- if not (kindIs "bool" .Values.kubeletPlugin.metrics.serviceMonitor.enabled) }}
+{{- fail "kubeletPlugin.metrics.serviceMonitor.enabled must be a boolean" }}
+{{- end }}
+{{- $port := .Values.kubeletPlugin.metrics.port }}
+{{- if or (not (regexMatch "^[0-9]+$" (toString $port))) (lt (int $port) 1) (gt (int $port) 65535) }}
+{{- fail "kubeletPlugin.metrics.port must be an integer in [1,65535]" }}
+{{- end }}
+{{- range $name, $value := dict "collectionInterval" .Values.kubeletPlugin.metrics.collectionInterval "maxAge" .Values.kubeletPlugin.metrics.maxAge "serviceMonitor.interval" .Values.kubeletPlugin.metrics.serviceMonitor.interval }}
+{{- if or (not (kindIs "string" $value)) (empty $value) }}
+{{- fail (printf "kubeletPlugin.metrics.%s must be a non-empty string" $name) }}
+{{- end }}
+{{- end }}
+{{- if not (kindIs "map" .Values.kubeletPlugin.metrics.serviceMonitor.labels) }}
+{{- fail "kubeletPlugin.metrics.serviceMonitor.labels must be a map of strings" }}
+{{- end }}
+{{- range $value := .Values.kubeletPlugin.metrics.serviceMonitor.labels }}
+{{- if not (kindIs "string" $value) }}
+{{- fail "kubeletPlugin.metrics.serviceMonitor.labels must be a map of strings" }}
+{{- end }}
+{{- end }}

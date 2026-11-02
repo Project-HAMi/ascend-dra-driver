@@ -21,6 +21,13 @@ package consts
 // and inside ResourceSlice / ResourceClaim objects.
 const DriverName = "ascend.project-hami.io"
 
+// CoreRevision pins the versioned runtime assets used by CDI.
+const (
+	CoreRevision    = "98ec21f47d6c42c9ef092e7e7e55f10e7f838072"
+	CoreHostRoot    = "/usr/local/hami-vnpu-core"
+	CoreRuntimePath = CoreHostRoot + "/releases/" + CoreRevision
+)
+
 // ResourceSlice attribute names owned by this driver are intentionally
 // unqualified. Kubernetes interprets unqualified names as belonging to the
 // driver's domain, while consumers such as HAMi-DRA read these map keys

@@ -24,6 +24,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/urfave/cli/v2"
 
@@ -31,6 +32,7 @@ import (
 	"k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 
+	"github.com/Project-HAMi/hami-dra-driver/internal/monitor"
 	"github.com/Project-HAMi/hami-dra-driver/pkg/consts"
 	"github.com/Project-HAMi/hami-dra-driver/pkg/flags"
 	"github.com/Project-HAMi/hami-dra-driver/pkg/version"
@@ -52,6 +54,10 @@ type Flags struct {
 	kubeletRegistrarDirectoryPath string
 	kubeletPluginsDirectoryPath   string
 	healthcheckPort               int
+	metricsBindAddress            string
+	metricsInterval               time.Duration
+	metricsMaxAge                 time.Duration
+	podResourcesSocket            string
 }
 
 type Config struct {
@@ -119,6 +125,12 @@ func newApp() *cli.App {
 		},
 	}
 	cliFlags = append(cliFlags, flags.kubeClientConfig.Flags()...)
+	cliFlags = append(cliFlags,
+		&cli.StringFlag{Name: "metrics-bind-address", Value: ":9395", Destination: &flags.metricsBindAddress, Usage: "HAMi core metrics HTTP address; empty disables metrics"},
+		&cli.DurationFlag{Name: "metrics-collection-interval", Value: monitor.DefaultInterval, Destination: &flags.metricsInterval},
+		&cli.DurationFlag{Name: "metrics-max-age", Value: monitor.DefaultMaxAge, Destination: &flags.metricsMaxAge},
+		&cli.StringFlag{Name: "pod-resources-socket", Value: "/var/lib/kubelet/pod-resources/kubelet.sock", Destination: &flags.podResourcesSocket},
+	)
 	cliFlags = append(cliFlags, flags.featureGateConfig.Flags()...)
 	cliFlags = append(cliFlags, flags.loggingConfig.Flags()...)
 

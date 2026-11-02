@@ -25,7 +25,7 @@ BUILDIMAGE ?= $(IMAGE_NAME)-build:$(BUILDIMAGE_TAG)
 
 CMDS := $(patsubst ./cmd/%/,%,$(sort $(dir $(wildcard ./cmd/*/))))
 CMD_TARGETS := $(patsubst %,cmd-%, $(CMDS))
-GO_PACKAGES := ./api/... ./cmd/... ./pkg/...
+GO_PACKAGES := ./api/... ./cmd/... ./pkg/... ./internal/...
 
 .PHONY: init-submodules
 init-submodules:
@@ -36,7 +36,7 @@ submodules:
 	git submodule update --init --recursive
 
 CHECK_TARGETS := assert-fmt vet lint ineffassign misspell
-MAKE_TARGETS := binaries build check vendor fmt test examples cmds coverage generate image \
+MAKE_TARGETS := binaries build check vendor fmt test test-unit examples cmds coverage generate image \
 	libvnpu-artifacts verify-libvnpu-artifacts verify-helm-chart \
 	verify-helm-release-path submodules $(CHECK_TARGETS)
 
@@ -118,6 +118,11 @@ COVERAGE_FILE := coverage.out
 test: build cmds
 	go test -v -coverprofile=$(COVERAGE_FILE) $(GO_PACKAGES)
 
+# Keep the mocked DRA e2e lifecycle suite separate during pre-review validation.
+test-unit:
+	go test -skip '^TestMockDRA' $(GO_PACKAGES)
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_*.py'
+
 coverage: test
 	cat $(COVERAGE_FILE) | grep -v "_mock.go" > $(COVERAGE_FILE).no-mocks
 	go tool cover -func=$(COVERAGE_FILE).no-mocks
@@ -125,16 +130,24 @@ coverage: test
 LIBVNPU_ARTIFACTS_DIR := $(DIST_DIR)/hami-vnpu-core
 LIBVNPU_LIBRARY := $(LIBVNPU_ARTIFACTS_DIR)/libvnpu.so
 LIBVNPU_PRELOAD := $(LIBVNPU_ARTIFACTS_DIR)/ld.so.preload
+LIBVNPU_CORE_REVISION := 98ec21f47d6c42c9ef092e7e7e55f10e7f838072
 
 libvnpu-artifacts: submodules
+	test "$$(git -C hami-vnpu-core rev-parse HEAD)" = "$(LIBVNPU_CORE_REVISION)"
 	$(CARGO) build --release --manifest-path $(CURDIR)/hami-vnpu-core/Cargo.toml
 	$(MKDIR) -p $(LIBVNPU_ARTIFACTS_DIR)
 	cp $(CURDIR)/hami-vnpu-core/target/release/libvnpu.so $(LIBVNPU_LIBRARY)
 	printf '%s\n' '/hami-vnpu-core/libvnpu.so' > $(LIBVNPU_PRELOAD)
+	printf '%s\n' '$(LIBVNPU_CORE_REVISION)' > $(LIBVNPU_ARTIFACTS_DIR)/core-revision
+	printf '%s\n' 'per-device-v1' > $(LIBVNPU_ARTIFACTS_DIR)/core-layout
+	(cd $(LIBVNPU_ARTIFACTS_DIR) && sha256sum libvnpu.so > libvnpu.sha256)
 
 verify-libvnpu-artifacts:
 	test -s $(LIBVNPU_LIBRARY)
 	grep -Fxq '/hami-vnpu-core/libvnpu.so' $(LIBVNPU_PRELOAD)
+	grep -Fxq '$(LIBVNPU_CORE_REVISION)' $(LIBVNPU_ARTIFACTS_DIR)/core-revision
+	grep -Fxq 'per-device-v1' $(LIBVNPU_ARTIFACTS_DIR)/core-layout
+	(cd $(LIBVNPU_ARTIFACTS_DIR) && sha256sum -c libvnpu.sha256)
 
 image: submodules verify-libvnpu-artifacts
 	$(CONTAINER_TOOL) build \
