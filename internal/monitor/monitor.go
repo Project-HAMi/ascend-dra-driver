@@ -157,7 +157,7 @@ func (m *Monitor) report(key, message string) {
 }
 
 func (m *Monitor) refresh(ctx context.Context, now time.Time) {
-	o := observation{at: now, counts: make(map[string]int), ok: make(map[string]bool), last: make(map[string]time.Time)}
+	o := observation{at: now, ok: make(map[string]bool), last: make(map[string]time.Time)}
 	workCtx, cancel := context.WithTimeout(ctx, m.config.Interval)
 	workloads, err := m.src.Workloads(workCtx)
 	cancel()
@@ -183,7 +183,6 @@ func (m *Monitor) refresh(ctx context.Context, now time.Time) {
 		}
 	}
 	prepared, err := m.src.Prepared()
-	o.gen = prepared.Generation
 	o.ok["shmem"] = err == nil
 	if err != nil {
 		m.report("prepared", err.Error())
@@ -197,8 +196,8 @@ func (m *Monitor) refresh(ctx context.Context, now time.Time) {
 	for source, at := range m.last {
 		o.last[source] = at
 	}
-	// Collect checks this snapshot's generation against the current driver state,
-	// so lifecycle changes invalidate all its container samples in one place.
+	// Collect checks each domain's Claim lifetime independently. Retrying or
+	// changing another Claim cannot invalidate these container samples.
 	m.c.Lock()
 	m.c.current = o
 	m.c.Unlock()
@@ -206,9 +205,10 @@ func (m *Monitor) refresh(ctx context.Context, now time.Time) {
 
 func (m *Monitor) observeDomains(o *observation, prepared PreparedSnapshot, hosts map[int]HostDevice, now time.Time) {
 	type row struct {
-		d Domain
-		c Consumer
-		h HostDevice
+		d        Domain
+		c        Consumer
+		h        HostDevice
+		observed *domainObservation
 	}
 	var rows []row
 	shortFiles := make(map[string]time.Time)
@@ -222,6 +222,8 @@ func (m *Monitor) observeDomains(o *observation, prepared PreparedSnapshot, host
 			continue
 		}
 		seen[identity] = true
+		observed := &domainObservation{claimUID: d.ClaimUID, generation: d.Generation}
+		o.domains = append(o.domains, observed)
 		state := ""
 		consumers := uniqueConsumers(m.workloads[d.ClaimUID])
 		h, exists := hosts[d.PhysicalID]
@@ -241,19 +243,19 @@ func (m *Monitor) observeDomains(o *observation, prepared PreparedSnapshot, host
 			state = "stale"
 		}
 		if state != "" {
-			o.counts[state]++
+			observed.state = state
 			continue
 		}
 		c := consumers[0]
 		key := [5]string{c.Namespace, c.Pod, c.Container, strconv.Itoa(d.PhysicalID), d.UUID}
 		keys[key]++
-		rows = append(rows, row{d: d, c: c, h: h})
+		rows = append(rows, row{d: d, c: c, h: h, observed: observed})
 	}
 	for _, r := range rows {
 		labels := []string{r.c.Namespace, r.c.Pod, r.c.Container, strconv.Itoa(r.d.PhysicalID), r.d.UUID}
 		key := [5]string{labels[0], labels[1], labels[2], labels[3], labels[4]}
 		if keys[key] > 1 {
-			o.counts["ambiguous"]++
+			r.observed.state = "ambiguous"
 			m.report(r.d.ClaimUID, "label_collision")
 			continue
 		}
@@ -275,9 +277,9 @@ func (m *Monitor) observeDomains(o *observation, prepared PreparedSnapshot, host
 		}
 		if err != nil {
 			if errors.Is(err, errPending) {
-				o.counts["pending"]++
+				r.observed.state = "pending"
 			} else {
-				o.counts["invalid"]++
+				r.observed.state = "invalid"
 				o.ok["shmem"] = false
 				m.report(r.d.ClaimUID, err.Error())
 			}
@@ -288,7 +290,7 @@ func (m *Monitor) observeDomains(o *observation, prepared PreparedSnapshot, host
 		} else {
 			delete(m.reported, r.d.ClaimUID)
 		}
-		o.counts["ready"]++
+		r.observed.state = "ready"
 		for i, value := range []float64{float64(memory.used), float64(memory.limit), r.h.Utilization, 0, 0, 0} {
 			if i == 2 && !r.h.UtilValid {
 				continue
@@ -297,7 +299,7 @@ func (m *Monitor) observeDomains(o *observation, prepared PreparedSnapshot, host
 			if i == 2 {
 				at = m.host.at
 			}
-			o.samples = append(o.samples, sample{desc: i + containerMetricStart, value: value, labels: labels, at: at})
+			o.samples = append(o.samples, sample{desc: i + containerMetricStart, value: value, labels: labels, at: at, domain: r.observed})
 		}
 	}
 	m.shortFiles = shortFiles

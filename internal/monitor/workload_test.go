@@ -171,18 +171,18 @@ func TestBackgroundResolveManyClaims(t *testing.T) {
 	t.Cleanup(server.Stop)
 	resolver, err := NewWorkloadResolver(socket)
 	require.NoError(t, err)
-	prepared := PreparedSnapshot{Generation: 1}
+	prepared := PreparedSnapshot{}
 	for i := range 36 {
 		uid := fmt.Sprintf("claim-%d", i)
 		pr.response.PodResources = append(pr.response.PodResources, consumerRow("ns", fmt.Sprintf("pod-%d", i), "app", uid))
-		domain := Domain{ClaimUID: uid, Pool: "node", Device: "npu-1-0", PhysicalID: 3, UUID: "uuid", MemoryLimit: 1 << 30, Supported: true}
+		domain := Domain{ClaimUID: uid, Generation: 1, Pool: "node", Device: "npu-1-0", PhysicalID: 3, UUID: "uuid", MemoryLimit: 1 << 30, Supported: true}
 		prepared.Domains = append(prepared.Domains, domain)
 		writeDomain(t, root, domain, coreFixture())
 	}
 	cfg := Config{BindAddress: "127.0.0.1:0", ClaimsRoot: root, Interval: 50 * time.Millisecond, MaxAge: 150 * time.Millisecond}
 	started := time.Now()
 	m, err := Start(context.Background(), cfg, Sources{
-		Prepared: func() (PreparedSnapshot, error) { return prepared, nil }, Generation: func() uint64 { return 1 },
+		Prepared: func() (PreparedSnapshot, error) { return prepared, nil }, Generation: func(string) uint64 { return 1 },
 		Workloads: resolver.Resolve, Close: resolver.Close,
 		Host: func(context.Context) ([]HostDevice, error) {
 			return []HostDevice{{LogicalID: 1, PhysicalID: 3, UUID: "uuid", MemoryValid: true, UtilValid: true}}, nil
@@ -200,7 +200,7 @@ func TestBackgroundResolveManyClaims(t *testing.T) {
 		m.c.RLock()
 		defer m.c.RUnlock()
 		return time.Since(started) > 2*cfg.MaxAge && pr.calls.Load() >= 8 &&
-			m.c.current.counts["ready"] == 36 && m.c.current.ok["workload"]
+			countObservedDomains(m.c.current, "ready") == 36 && m.c.current.ok["workload"]
 	}, 3*time.Second, 10*time.Millisecond)
 	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
 }
@@ -220,7 +220,7 @@ func TestPreparedStateGatesCDIIdentityAndMetricLifetime(t *testing.T) {
 	require.NotContains(t, gather(t, m.c), "hami_vgpu_")
 
 	prepared.Domains = []Domain{domain}
-	prepared.Generation++
+	prepared.Domains[0].Generation++
 	m.refresh(context.Background(), now)
 	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
 
@@ -236,10 +236,10 @@ func TestPreparedStateGatesCDIIdentityAndMetricLifetime(t *testing.T) {
 
 	// A same-name Claim with a new UID cannot consume the old CDI identity.
 	prepared.Domains[0].ClaimUID = "replacement"
-	prepared.Generation++
+	prepared.Domains[0].Generation++
 	writeDomain(t, m.config.ClaimsRoot, prepared.Domains[0], coreFixture())
 	m.refresh(context.Background(), later)
-	require.Equal(t, 1, m.c.current.counts["unmapped"])
+	require.Equal(t, 1, countObservedDomains(m.c.current, "unmapped"))
 	require.NotContains(t, gather(t, m.c), "hami_vgpu_")
 	device.CdiDevices[1].Name = "k8s." + consts.DriverName + "/npu=replacement"
 	device.PoolName = "another-node"
@@ -252,11 +252,10 @@ func TestPreparedStateGatesCDIIdentityAndMetricLifetime(t *testing.T) {
 	// Unprepare invalidates every old container sample immediately, even if
 	// kubelet still returns the previous row and the SHM file remains.
 	prepared.Domains = nil
-	prepared.Generation++
 	output := gather(t, m.c)
 	require.NotContains(t, output, "hami_vgpu_")
 	require.NotContains(t, output, "hami_container_")
 	require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
 	m.refresh(context.Background(), later)
-	require.Empty(t, m.c.current.counts)
+	require.Empty(t, m.c.current.domains)
 }

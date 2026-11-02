@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -22,8 +23,8 @@ import (
 func sampleMonitor(t *testing.T) (*Monitor, *PreparedSnapshot, *map[string][]Consumer, time.Time) {
 	t.Helper()
 	now := time.Unix(1234567890, 0)
-	d := Domain{ClaimUID: "claim", Pool: "node", Device: "npu-1-0", PhysicalID: 3, UUID: "uuid-3", MemoryLimit: 1 << 30, Supported: true}
-	p := &PreparedSnapshot{Generation: 1, Domains: []Domain{d}}
+	d := Domain{ClaimUID: "claim", Generation: 1, Pool: "node", Device: "npu-1-0", PhysicalID: 3, UUID: "uuid-3", MemoryLimit: 1 << 30, Supported: true}
+	p := &PreparedSnapshot{Domains: []Domain{d}}
 	w := map[string][]Consumer{"claim": {{Namespace: "ns", Pod: "pod", Container: "app", Devices: map[DeviceRef]bool{{Pool: "node", Device: "npu-1-0"}: true}}}}
 	m := &Monitor{
 		config: Config{ClaimsRoot: t.TempDir(), Interval: time.Second, MaxAge: 15 * time.Second},
@@ -31,7 +32,19 @@ func sampleMonitor(t *testing.T) (*Monitor, *PreparedSnapshot, *map[string][]Con
 		host: hostResult{at: now, devices: []HostDevice{{LogicalID: 1, PhysicalID: 3, UUID: "uuid-3", Type: "910B", MemoryUsed: 2 << 30, Utilization: 73, MemoryValid: true, UtilValid: true}}},
 	}
 	m.src = Sources{
-		Prepared: func() (PreparedSnapshot, error) { return *p, nil }, Generation: func() uint64 { return p.Generation },
+		Prepared: func() (PreparedSnapshot, error) {
+			snapshot := *p
+			snapshot.Domains = append([]Domain(nil), p.Domains...)
+			return snapshot, nil
+		},
+		Generation: func(uid string) uint64 {
+			for _, d := range p.Domains {
+				if d.ClaimUID == uid {
+					return d.Generation
+				}
+			}
+			return 0
+		},
 		Workloads: func(context.Context) (map[string][]Consumer, error) { return w, nil },
 	}
 	m.c = &collector{maxAge: m.config.MaxAge, generation: m.src.Generation, now: func() time.Time { return now }}
@@ -40,6 +53,16 @@ func sampleMonitor(t *testing.T) (*Monitor, *PreparedSnapshot, *map[string][]Con
 	setSlot(data, 1, 22, 8192, 1)
 	writeDomain(t, m.config.ClaimsRoot, d, data)
 	return m, p, &w, now
+}
+
+func countObservedDomains(o observation, state string) int {
+	count := 0
+	for _, d := range o.domains {
+		if d.state == state {
+			count++
+		}
+	}
+	return count
 }
 
 func gather(t *testing.T, c prometheus.Collector) string {
@@ -92,19 +115,19 @@ hami_vgpu_memory_buffer_bytes{` + labels + `} 0
 		names = append(names, "hami_"+name)
 	}
 	require.NoError(t, testutil.CollectAndCompare(m.c, strings.NewReader(expected), names...))
-	require.Equal(t, 1, m.c.current.counts["ready"])
+	require.Equal(t, 1, countObservedDomains(m.c.current, "ready"))
 }
 
 func TestUniqueConsumerConstraintAndRepeatedReferences(t *testing.T) {
 	m, _, w, now := sampleMonitor(t)
 	(*w)["claim"] = append((*w)["claim"], (*w)["claim"][0])
 	m.refresh(context.Background(), now)
-	require.Equal(t, 1, m.c.current.counts["ready"], "same container with repeated references is one consumer")
+	require.Equal(t, 1, countObservedDomains(m.c.current, "ready"), "same container with repeated references is one consumer")
 	second := (*w)["claim"][0]
 	second.Container = "other"
 	(*w)["claim"] = append((*w)["claim"], second)
 	m.refresh(context.Background(), now)
-	require.Equal(t, 1, m.c.current.counts["ambiguous"])
+	require.Equal(t, 1, countObservedDomains(m.c.current, "ambiguous"))
 	output := gather(t, m.c)
 	require.NotContains(t, output, "hami_vgpu_memory_used_bytes")
 	require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
@@ -114,7 +137,7 @@ func TestPendingInvalidAndStaleSamplesAreNotZero(t *testing.T) {
 	m, p, _, now := sampleMonitor(t)
 	p.Domains[0].PhysicalID = 4 // Missing identity must not silently reuse physical 3.
 	m.refresh(context.Background(), now)
-	require.Equal(t, 1, m.c.current.counts["stale"])
+	require.Equal(t, 1, countObservedDomains(m.c.current, "stale"))
 	p.Domains[0].PhysicalID = 3
 	p.Domains[0].ClaimUID = "not-started"
 	consumers := m.workloads["claim"]
@@ -122,11 +145,11 @@ func TestPendingInvalidAndStaleSamplesAreNotZero(t *testing.T) {
 		return map[string][]Consumer{"not-started": consumers}, nil
 	}
 	m.refresh(context.Background(), now)
-	require.Equal(t, 1, m.c.current.counts["pending"])
+	require.Equal(t, 1, countObservedDomains(m.c.current, "pending"))
 	require.NotContains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
 	writeDomain(t, m.config.ClaimsRoot, p.Domains[0], []byte{1})
 	m.refresh(context.Background(), now)
-	require.Equal(t, 1, m.c.current.counts["pending"])
+	require.Equal(t, 1, countObservedDomains(m.c.current, "pending"))
 }
 
 func TestShortFileGraceExpiresAndRecoversWithoutCachedUsage(t *testing.T) {
@@ -141,17 +164,17 @@ func TestShortFileGraceExpiresAndRecoversWithoutCachedUsage(t *testing.T) {
 		require.NotContains(t, output, "hami_container_")
 		require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
 		if elapsed < m.config.Interval {
-			require.Equal(t, 1, m.c.current.counts["pending"])
+			require.Equal(t, 1, countObservedDomains(m.c.current, "pending"))
 			require.True(t, m.c.current.ok["shmem"])
 		}
 	}
-	require.Equal(t, 1, m.c.current.counts["invalid"])
+	require.Equal(t, 1, countObservedDomains(m.c.current, "invalid"))
 	require.False(t, m.c.current.ok["shmem"])
 	data := coreFixture()
 	setSlot(data, 0, 11, 4096, 1)
 	writeDomain(t, m.config.ClaimsRoot, p.Domains[0], data)
 	m.refresh(context.Background(), now.Add(2*m.config.Interval))
-	require.Equal(t, 1, m.c.current.counts["ready"])
+	require.Equal(t, 1, countObservedDomains(m.c.current, "ready"))
 	require.True(t, m.c.current.ok["shmem"])
 	expected := `
 # HELP hami_vgpu_memory_used_bytes vGPU device memory usage in bytes
@@ -161,14 +184,14 @@ hami_vgpu_memory_used_bytes{container="app",device_uuid="uuid-3",namespace="ns",
 	require.NoError(t, testutil.CollectAndCompare(m.c, strings.NewReader(expected), "hami_vgpu_memory_used_bytes"))
 	writeDomain(t, m.config.ClaimsRoot, p.Domains[0], []byte{1})
 	m.refresh(context.Background(), now.Add(3*m.config.Interval))
-	require.Equal(t, 1, m.c.current.counts["pending"], "a recovered file must not retain its previous failure history")
+	require.Equal(t, 1, countObservedDomains(m.c.current, "pending"), "a recovered file must not retain its previous failure history")
 }
 
 func TestGenerationRemovalAndFreshnessSuppressOldSeries(t *testing.T) {
 	m, p, _, now := sampleMonitor(t)
 	m.refresh(context.Background(), now)
 	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
-	p.Generation++
+	p.Domains[0].Generation++
 	output := gather(t, m.c)
 	require.NotContains(t, output, "hami_vgpu_")
 	require.NotContains(t, output, "hami_container_")
@@ -200,7 +223,7 @@ func TestLabelCollisionSuppressesBothClaims(t *testing.T) {
 	p.Domains = append(p.Domains, d)
 	(*w)["second"] = (*w)["claim"]
 	m.refresh(context.Background(), now)
-	require.Equal(t, 2, m.c.current.counts["ambiguous"])
+	require.Equal(t, 2, countObservedDomains(m.c.current, "ambiguous"))
 	require.NotContains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
 }
 
@@ -224,7 +247,7 @@ func TestMultipleCardsAndIndependentClaimsKeepTheirAccounting(t *testing.T) {
 	binary.LittleEndian.PutUint64(data, 2<<30)
 	writeDomain(t, m.config.ClaimsRoot, other, data)
 	m.refresh(context.Background(), now)
-	require.Equal(t, 3, m.c.current.counts["ready"])
+	require.Equal(t, 3, countObservedDomains(m.c.current, "ready"))
 	expected := `
 # HELP hami_vgpu_memory_used_bytes vGPU device memory usage in bytes
 # TYPE hami_vgpu_memory_used_bytes gauge
@@ -240,7 +263,7 @@ func TestGenerationChangeDuringSamplingCannotPublishRemovedDomain(t *testing.T) 
 	prepared := m.src.Prepared
 	m.src.Prepared = func() (PreparedSnapshot, error) {
 		snapshot, err := prepared()
-		p.Generation++
+		p.Domains[0].Generation++
 		return snapshot, err
 	}
 	m.refresh(context.Background(), now)
@@ -252,6 +275,80 @@ func TestGenerationChangeDuringSamplingCannotPublishRemovedDomain(t *testing.T) 
 	m.src.Prepared = prepared
 	m.refresh(context.Background(), now)
 	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes", "a fresh generation must resume collection")
+}
+
+func TestClaimGenerationChangesOnlyInvalidateThatClaimsDomains(t *testing.T) {
+	m, p, workloads, now := sampleMonitor(t)
+	card := p.Domains[0]
+	card.PhysicalID, card.UUID, card.Device = 7, "uuid-7", "npu-0-0"
+	p.Domains = append(p.Domains, card)
+	(*workloads)["claim"][0].Devices[DeviceRef{Pool: "node", Device: card.Device}] = true
+	m.host.devices = append(m.host.devices, HostDevice{PhysicalID: 7, UUID: "uuid-7", MemoryValid: true, UtilValid: true})
+	writeDomain(t, m.config.ClaimsRoot, card, coreFixture())
+	other := p.Domains[0]
+	other.ClaimUID = "other"
+	p.Domains = append(p.Domains, other)
+	consumer := (*workloads)["claim"][0]
+	consumer.Pod = "unrelated"
+	(*workloads)["other"] = []Consumer{consumer}
+	writeDomain(t, m.config.ClaimsRoot, other, coreFixture())
+	m.refresh(context.Background(), now)
+
+	// Change one Claim's lifetime after its snapshot was captured. Both its
+	// cards must disappear, while all six metrics of the other Claim survive.
+	prepared := m.src.Prepared
+	m.src.Prepared = func() (PreparedSnapshot, error) {
+		snapshot, err := prepared()
+		for i := range p.Domains {
+			if p.Domains[i].ClaimUID == "claim" {
+				p.Domains[i].Generation++
+			}
+		}
+		return snapshot, err
+	}
+	m.refresh(context.Background(), now)
+	assertOnlyUnrelated := func() {
+		reg := prometheus.NewPedanticRegistry()
+		require.NoError(t, reg.Register(m.c))
+		families, err := reg.Gather()
+		require.NoError(t, err)
+		containers := 0
+		for _, f := range families {
+			if !strings.HasPrefix(f.GetName(), "hami_") || strings.HasPrefix(f.GetName(), "hami_host_") {
+				continue
+			}
+			containers++
+			require.Len(t, f.Metric, 1)
+			for _, label := range f.Metric[0].Label {
+				if label.GetName() == "pod" {
+					require.Equal(t, "unrelated", label.GetValue())
+				}
+			}
+		}
+		require.Equal(t, 6, containers)
+	}
+	assertOnlyUnrelated()
+	assertCounts := func(stale int) {
+		expected := "# HELP ascend_dra_monitor_domains Number of prepared physical-card domains by observation state\n# TYPE ascend_dra_monitor_domains gauge\n"
+		for _, state := range states {
+			count := 0
+			switch state {
+			case "ready":
+				count = 1
+			case "stale":
+				count = stale
+			}
+			expected += fmt.Sprintf("ascend_dra_monitor_domains{state=%q} %d\n", state, count)
+		}
+		require.NoError(t, testutil.CollectAndCompare(m.c, strings.NewReader(expected), "ascend_dra_monitor_domains"))
+	}
+	assertCounts(2)
+
+	// Removal must not leave obsolete prepared counts or resurrect old samples.
+	p.Domains = p.Domains[2:]
+	assertOnlyUnrelated()
+	assertCounts(0)
+	require.Contains(t, gather(t, m.c), "hami_host_gpu_memory_used_bytes")
 }
 
 func TestWorkloadFailureExpiresAndDoesNotInventConsumers(t *testing.T) {
@@ -271,7 +368,7 @@ func TestHTTPClosesAndBlockedHardwareDoesNotSpawnReplacements(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	src := Sources{
-		Prepared: func() (PreparedSnapshot, error) { return PreparedSnapshot{}, nil }, Generation: func() uint64 { return 0 },
+		Prepared: func() (PreparedSnapshot, error) { return PreparedSnapshot{}, nil }, Generation: func(string) uint64 { return 0 },
 		Workloads: func(context.Context) (map[string][]Consumer, error) { return nil, nil },
 		Host:      func(context.Context) ([]HostDevice, error) { calls.Add(1); <-blocked; return nil, nil },
 	}

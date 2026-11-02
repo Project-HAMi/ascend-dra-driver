@@ -58,11 +58,12 @@ func preparedCoreQuota(devices PreparedDevices) (uint64, bool) {
 func (s *DeviceState) metricsSnapshot() (monitor.PreparedSnapshot, error) {
 	s.Lock()
 	defer s.Unlock()
-	result := monitor.PreparedSnapshot{Generation: s.monitorGeneration.Load()}
+	result := monitor.PreparedSnapshot{}
 	// Prepared state is restored once at startup and maintained under this lock
 	// by lifecycle operations. Monitoring does no checkpoint I/O under the lock.
 	for uid, devices := range s.prepared {
 		quota, supported := preparedCoreQuota(devices)
+		generation := s.metricsGeneration(uid)
 		for _, prepared := range devices {
 			device, exists := s.allocatable[prepared.DeviceName]
 			if !exists {
@@ -73,12 +74,21 @@ func (s *DeviceState) metricsSnapshot() (monitor.PreparedSnapshot, error) {
 				return result, fmt.Errorf("missing metrics identity for %s", prepared.DeviceName)
 			}
 			result.Domains = append(result.Domains, monitor.Domain{
-				ClaimUID: uid, Pool: prepared.PoolName, Device: prepared.DeviceName,
+				ClaimUID: uid, Generation: generation, Pool: prepared.PoolName, Device: prepared.DeviceName,
 				PhysicalID: int(*physical.IntValue), UUID: *uuid.StringValue, MemoryLimit: quota, Supported: supported,
 			})
 		}
 	}
 	return result, nil
+}
+
+// metricsGeneration is independent of the state lock held during lifecycle I/O.
+// Zero means this Claim is no longer prepared.
+func (s *DeviceState) metricsGeneration(uid string) uint64 {
+	if generation, ok := s.monitorGenerations.Load(uid); ok {
+		return generation.(uint64)
+	}
+	return 0
 }
 
 func startMetrics(ctx context.Context, cfg *Config, state *DeviceState) (*monitor.Monitor, error) {
@@ -87,7 +97,7 @@ func startMetrics(ctx context.Context, cfg *Config, state *DeviceState) (*monito
 		return nil, err
 	}
 	source := monitor.Sources{
-		Prepared: state.metricsSnapshot, Generation: state.monitorGeneration.Load,
+		Prepared: state.metricsSnapshot, Generation: state.metricsGeneration,
 		Workloads: resolver.Resolve, Close: resolver.Close,
 		Host: func(ctx context.Context) ([]monitor.HostDevice, error) {
 			return collectMetricsHost(ctx, state.manager, dcmi.FuncDcmiGetDeviceHbmInfo)

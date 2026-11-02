@@ -101,6 +101,13 @@ Claim's container samples and logs the conflict. It does not enforce admission;
 the planned Webhook remains separate. Conflicting label sets from different
 Claims are also suppressed instead of producing duplicate Prometheus samples.
 
+Each prepared Claim lifetime has an internal version token. Idempotent retries
+and failures that leave prepared state unchanged keep that token; changes to
+one Claim do not invalidate other Claims' samples or domain counts. Unprepare
+removes only that Claim's token, and preparing the same UID again gets a fresh
+token so old samples cannot reappear. Tokens are rebuilt from checkpoints at
+startup and are not exported as metric labels.
+
 `ascend_dra_monitor_source_success{source="devices|shmem|workload"}` reports
 collection success; `ascend_dra_monitor_last_success_timestamp_seconds` records
 the last successful refresh. `ascend_dra_monitor_domains` counts states

@@ -12,6 +12,7 @@ import (
 // Domain is one prepared Claim's accounting domain on a physical NPU.
 type Domain struct {
 	ClaimUID, Pool, Device, UUID string
+	Generation                   uint64
 	PhysicalID                   int
 	MemoryLimit                  uint64
 	Supported                    bool
@@ -19,8 +20,7 @@ type Domain struct {
 
 // PreparedSnapshot is an immutable copy of the driver's prepared state.
 type PreparedSnapshot struct {
-	Generation uint64
-	Domains    []Domain
+	Domains []Domain
 }
 
 // DeviceRef identifies a device in PodResources' DRA results.
@@ -45,7 +45,7 @@ type HostDevice struct {
 // the monitor permits only one outstanding call and never waits for it on shutdown.
 type Sources struct {
 	Prepared   func() (PreparedSnapshot, error)
-	Generation func() uint64
+	Generation func(claimUID string) uint64 // Zero means no prepared lifetime.
 	Host       func(context.Context) ([]HostDevice, error)
 	Workloads  func(context.Context) (map[string][]Consumer, error)
 	Close      func()

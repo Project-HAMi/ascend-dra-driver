@@ -38,22 +38,28 @@ type sample struct {
 	value  float64
 	labels []string
 	at     time.Time
+	domain *domainObservation
+}
+
+type domainObservation struct {
+	claimUID   string
+	generation uint64
+	state      string
 }
 
 type observation struct {
 	samples []sample
-	counts  map[string]int
+	domains []*domainObservation
 	ok      map[string]bool
 	last    map[string]time.Time
 	at      time.Time
-	gen     uint64
 }
 
 type collector struct {
 	sync.RWMutex
 	current    observation
 	maxAge     time.Duration
-	generation func() uint64
+	generation func(string) uint64
 	now        func() time.Time
 }
 
@@ -70,10 +76,18 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	c.RLock()
 	o := c.current
 	c.RUnlock()
-	now, gen := c.now(), c.generation()
-	stale := now.Sub(o.at) > c.maxAge || o.gen != gen
+	now := c.now()
+	versions := make(map[string]uint64)
+	generation := func(d *domainObservation) uint64 {
+		if v, ok := versions[d.claimUID]; ok {
+			return v
+		}
+		v := c.generation(d.claimUID)
+		versions[d.claimUID] = v
+		return v
+	}
 	for _, s := range o.samples {
-		if now.Sub(s.at) > c.maxAge || (s.desc >= containerMetricStart && o.gen != gen) {
+		if now.Sub(s.at) > c.maxAge || (s.domain != nil && (s.domain.generation == 0 || generation(s.domain) != s.domain.generation)) {
 			continue
 		}
 		ch <- prometheus.MustNewConstMetric(business[s.desc], prometheus.GaugeValue, s.value, s.labels...)
@@ -90,17 +104,20 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		ch <- prometheus.MustNewConstMetric(lastSuccess, prometheus.GaugeValue, stamp, source)
 	}
-	for _, state := range states {
-		count := o.counts[state]
-		if stale {
-			count = 0
-			if state == "stale" {
-				for _, n := range o.counts {
-					count += n
-				}
-			}
+	counts := make(map[string]int)
+	for _, d := range o.domains {
+		v := generation(d)
+		if v == 0 {
+			continue // Unprepare removes this domain from the prepared counts.
 		}
-		ch <- prometheus.MustNewConstMetric(domainCount, prometheus.GaugeValue, float64(count), state)
+		state := d.state
+		if now.Sub(o.at) > c.maxAge || v != d.generation {
+			state = "stale"
+		}
+		counts[state]++
+	}
+	for _, state := range states {
+		ch <- prometheus.MustNewConstMetric(domainCount, prometheus.GaugeValue, float64(counts[state]), state)
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -114,14 +113,32 @@ func (pds PreparedDevices) GetDevices() []*drapbv1.Device {
 
 type DeviceState struct {
 	sync.Mutex
-	monitorGeneration atomic.Uint64
-	prepared          PreparedClaims
-	manager           *AscendManager
-	cdi               *CDIHandler
-	allocatable       AllocatableDevices
-	checkpointManager checkpointmanager.CheckpointManager
-	vnpuManager       *VNPUManager
-	libvNPUHostPath   string
+	nextClaimGeneration uint64
+	monitorGenerations  sync.Map // Claim UID -> uint64; readers never wait for lifecycle I/O.
+	prepared            PreparedClaims
+	manager             *AscendManager
+	cdi                 *CDIHandler
+	allocatable         AllocatableDevices
+	checkpointManager   checkpointmanager.CheckpointManager
+	vnpuManager         *VNPUManager
+	libvNPUHostPath     string
+}
+
+// setPreparedClaims publishes durable state under the state lock (or at startup).
+// An existing Claim keeps its token; removal and re-Prepare start a new lifetime.
+func (s *DeviceState) setPreparedClaims(claims PreparedClaims) {
+	for uid := range s.prepared {
+		if claims[uid] == nil {
+			s.monitorGenerations.Delete(uid)
+		}
+	}
+	for uid, devices := range claims {
+		if devices != nil && s.prepared[uid] == nil {
+			s.nextClaimGeneration++
+			s.monitorGenerations.Store(uid, s.nextClaimGeneration)
+		}
+	}
+	s.prepared = claims
 }
 
 func NewDeviceState(config *Config) (*DeviceState, error) {
@@ -180,7 +197,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 			if checkpoint.V1 == nil {
 				return nil, fmt.Errorf("checkpoint has no prepared claim state")
 			}
-			state.prepared = checkpoint.V1.PreparedClaims
+			state.setPreparedClaims(checkpoint.V1.PreparedClaims)
 			if vnpuManager != nil {
 				if err := CreatePredefinedDeviceClasses(vnpuManager); err != nil {
 					log.Printf("Failed to create predefined DeviceClasses: %v", err)
@@ -194,7 +211,7 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 	if err := state.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
 		return nil, fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
-	state.prepared = checkpoint.V1.PreparedClaims
+	state.setPreparedClaims(checkpoint.V1.PreparedClaims)
 	if vnpuManager != nil {
 		go func() {
 			if err := CreatePredefinedDeviceClasses(vnpuManager); err != nil {
@@ -208,7 +225,6 @@ func NewDeviceState(config *Config) (*DeviceState, error) {
 func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Device, error) {
 	s.Lock()
 	defer s.Unlock()
-	defer s.monitorGeneration.Add(1)
 
 	claimUID := string(claim.UID)
 
@@ -219,7 +235,7 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 	preparedClaims := checkpoint.V1.PreparedClaims
 
 	if preparedClaims[claimUID] != nil {
-		s.prepared = preparedClaims
+		s.setPreparedClaims(preparedClaims)
 		if featuregates.Enabled(featuregates.HAMivNPUCore) {
 			if _, ok := preparedCoreQuota(preparedClaims[claimUID]); !ok {
 				return nil, fmt.Errorf("claim %s has incompatible prepared core configuration; stop its workload and Unprepare before preparing again", claimUID)
@@ -278,7 +294,7 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 		return nil, fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
 	keepLocalShmemDir = true
-	s.prepared = preparedClaims
+	s.setPreparedClaims(preparedClaims)
 
 	return preparedClaims[claimUID].GetDevices(), nil
 }
@@ -286,7 +302,6 @@ func (s *DeviceState) Prepare(claim *resourceapi.ResourceClaim) ([]*drapbv1.Devi
 func (s *DeviceState) Unprepare(claimUID string) error {
 	s.Lock()
 	defer s.Unlock()
-	defer s.monitorGeneration.Add(1)
 
 	checkpoint := newCheckpoint()
 	if err := s.checkpointManager.GetCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
@@ -294,7 +309,7 @@ func (s *DeviceState) Unprepare(claimUID string) error {
 	}
 	preparedClaims := checkpoint.V1.PreparedClaims
 	if preparedClaims[claimUID] == nil {
-		s.prepared = preparedClaims
+		s.setPreparedClaims(preparedClaims)
 		if featuregates.Enabled(featuregates.HAMivNPUCore) {
 			return s.removeLibvNPUClaimLocalShmemDir(claimUID)
 		}
@@ -314,7 +329,7 @@ func (s *DeviceState) Unprepare(claimUID string) error {
 	if err := s.checkpointManager.CreateCheckpoint(DriverPluginCheckpointFile, checkpoint); err != nil {
 		return fmt.Errorf("unable to sync to checkpoint: %v", err)
 	}
-	s.prepared = preparedClaims
+	s.setPreparedClaims(preparedClaims)
 
 	if featuregates.Enabled(featuregates.HAMivNPUCore) {
 		return s.removeLibvNPUClaimLocalShmemDir(claimUID)
