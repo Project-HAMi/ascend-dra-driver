@@ -2,17 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chart render contract tests; these do not contact Kubernetes."""
 
+import hashlib
+import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CHART = ROOT / "deployments/helm/ascend-dra-driver"
+CORE_REVISION = "98ec21f47d6c42c9ef092e7e7e55f10e7f838072"
 
 
 @unittest.skipUnless(shutil.which("helm"), "helm is required for render tests")
@@ -22,6 +27,94 @@ class MetricsChartTest(unittest.TestCase):
         for setting in settings:
             command.extend(["--set", setting])
         return subprocess.run(command, capture_output=True, text=True, check=False)
+
+    def rendered_init(self):
+        result = self.render()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        init = result.stdout.split("      initContainers:\n", 1)[1].split("      containers:\n", 1)[0]
+        command = json.loads(re.search(r"command: (\[[^\n]+\])", init).group(1))
+        body = textwrap.dedent(re.search(r"(?m)^        - \|\n((?:          [^\n]*\n)+)", init).group(1))
+        return command, body
+
+    def core_assets(self, root):
+        assets = root / "assets"
+        assets.mkdir()
+        for name, content in {
+            "libvnpu.so": "test library",
+            "core-revision": CORE_REVISION + "\n",
+            "core-layout": "per-device-v1\n",
+            "ld.so.preload": "/hami-vnpu-core/libvnpu.so\n",
+        }.items():
+            (assets / name).write_text(content)
+        self.checksum(assets)
+        return assets
+
+    def checksum(self, assets):
+        digest = hashlib.sha256((assets / "libvnpu.so").read_bytes()).hexdigest()
+        (assets / "libvnpu.sha256").write_text(digest + "  libvnpu.so\n")
+
+    def execute_init(self, command, body, root):
+        # Run the complete rendered shell command and the real installer;
+        # relocate only filesystem paths into the disposable sandbox.
+        installer = root / "install-hami-vnpu-assets"
+        if not installer.exists():
+            shutil.copyfile(ROOT / "scripts/install-core-assets.sh", installer)
+            installer.chmod(0o755)  # Dockerfile COPY --chmod=0755.
+        body = body.replace("/usr/bin/install-hami-vnpu-assets", shlex.quote(str(installer)))
+        body = body.replace(" /usr/local/hami-vnpu-core\n", " " + shlex.quote(str(root / "host")) + "\n")
+        body = body.replace("/usr/local/hami-shared-region", shlex.quote(str(root / "shared")))
+        self.assertNotRegex(body, r"/usr/local/hami-vnpu-core(?!-assets)")
+        env = dict(os.environ, HAMI_VNPU_ASSETS_PATH=str(root / "assets"))
+        return subprocess.run([*command, body], env=env, capture_output=True, text=True, check=False)
+
+    def test_rendered_init_stops_before_shared_setup_when_installation_fails(self):
+        command, body = self.rendered_init()
+        for failure in ("missing-revision", "wrong-revision", "wrong-layout", "checksum"):
+            for existing_shared in (False, True):
+                with self.subTest(failure=failure, existing_shared=existing_shared), tempfile.TemporaryDirectory() as directory:
+                    root = pathlib.Path(directory)
+                    assets = self.core_assets(root)
+                    shared = root / "shared"
+                    if existing_shared:
+                        shared.mkdir(mode=0o700)
+                    if failure == "missing-revision":
+                        (assets / "core-revision").unlink()
+                    elif failure == "wrong-revision":
+                        (assets / "core-revision").write_text("0" * 40)
+                    elif failure == "wrong-layout":
+                        (assets / "core-layout").write_text("old-layout")
+                    else:
+                        (assets / "libvnpu.so").write_bytes(b"corrupted library")
+                    result = self.execute_init(command, body, root)
+                    self.assertNotEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse((root / "host/releases").exists())
+                    if existing_shared:
+                        self.assertEqual(shared.stat().st_mode & 0o777, 0o700)
+                    else:
+                        self.assertFalse(shared.exists())
+
+    def test_rendered_init_installs_idempotently_and_rejects_conflicting_assets(self):
+        command, body = self.rendered_init()
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            assets = self.core_assets(root)
+            result = self.execute_init(command, body, root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            library = root / "host/releases" / CORE_REVISION / "libvnpu.so"
+            self.assertEqual(library.read_bytes(), b"test library")
+            self.assertEqual((root / "shared").stat().st_mode & 0o777, 0o777)
+            inode = library.stat().st_ino
+            result = self.execute_init(command, body, root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(library.stat().st_ino, inode)
+            (root / "shared").chmod(0o700)
+            (assets / "libvnpu.so").write_bytes(b"different build under the same revision")
+            self.checksum(assets)
+            result = self.execute_init(command, body, root)
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(library.read_bytes(), b"test library")
+            self.assertEqual(library.stat().st_ino, inode)
+            self.assertEqual((root / "shared").stat().st_mode & 0o777, 0o700)
 
     def test_defaults_expose_individual_endpoints_without_operator(self):
         result = self.render()

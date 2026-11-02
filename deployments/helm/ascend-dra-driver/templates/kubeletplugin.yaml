@@ -40,6 +40,7 @@ spec:
         command: ["sh", "-c"]
         args:
         - |
+          set -eu
           ASSETS_PATH="${HAMI_VNPU_ASSETS_PATH:-/usr/local/hami-vnpu-core-assets}"
           /usr/bin/install-hami-vnpu-assets "$ASSETS_PATH" /usr/local/hami-vnpu-core
           mkdir -p /usr/local/hami-shared-region
