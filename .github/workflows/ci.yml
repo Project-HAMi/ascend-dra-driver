@@ -142,6 +142,12 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
+      - name: Trust build repositories
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/hami-vnpu-core"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/third_party/mind-cluster"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
