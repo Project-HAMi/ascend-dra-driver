@@ -24,7 +24,7 @@ class MetricsChartTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("clusterIP: None", result.stdout)
         self.assertIn("--metrics-bind-address=:9395", result.stdout)
-        self.assertIn('resources: ["pods"]', result.stdout)
+        self.assertNotIn('resources: ["pods"]', result.stdout)
         self.assertNotIn("kind: ServiceMonitor", result.stdout)
 
     def test_operator_preserves_workload_labels_and_custom_port(self):

@@ -312,10 +312,10 @@ func (m *Monitor) observeDomains(o *observation, prepared PreparedSnapshot, host
 }
 
 func uniqueConsumers(input []Consumer) []Consumer {
-	indices := make(map[[2]string]int)
+	indices := make(map[[3]string]int)
 	var output []Consumer
 	for _, c := range input {
-		key := [2]string{c.PodUID, c.Container}
+		key := [3]string{c.Namespace, c.Pod, c.Container}
 		i, exists := indices[key]
 		if !exists {
 			i = len(output)

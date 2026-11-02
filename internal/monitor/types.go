@@ -28,8 +28,8 @@ type DeviceRef struct{ Pool, Device string }
 
 // Consumer identifies a Claim's container, with duplicate request references merged.
 type Consumer struct {
-	Namespace, Pod, PodUID, Container string
-	Devices                           map[DeviceRef]bool
+	Namespace, Pod, Container string
+	Devices                   map[DeviceRef]bool
 }
 
 // HostDevice separates valid hardware readings from failed queries.

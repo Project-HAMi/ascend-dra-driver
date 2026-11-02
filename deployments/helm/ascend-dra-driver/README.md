@@ -47,10 +47,15 @@ scrape_configs:
 
 The CLI also exposes `--metrics-bind-address` (empty disables),
 `--metrics-collection-interval`, `--metrics-max-age` and `--pod-resources-socket`.
-The kubelet PodResources DRA reporting must be enabled. The chart grants Pod
-read permissions and mounts the kubelet PodResources socket. Claim ownership
-uses immutable UIDs, current Pod/container references and this driver's CDI
-device identities, rather than HAMi Device Plugin annotations.
+The kubelet PodResources DRA reporting must be enabled. The chart mounts the
+kubelet PodResources socket; collection makes no Kubernetes API requests and
+needs no Pod read permissions. Ownership joins the node's prepared Claim UIDs
+and pool/device references with this driver's CDI identities in PodResources.
+Pod/container labels come from that local snapshot, without Device Plugin
+annotations or Pod/Claim API lookups. API deletion timestamps or terminal phases
+do not suppress a still-prepared, observed consumer; Unprepare invalidates its
+container samples. Missing/uninitialized SHM and source freshness checks still
+apply.
 
 ## Metric meanings
 

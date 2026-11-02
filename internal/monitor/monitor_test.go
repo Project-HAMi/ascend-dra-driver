@@ -24,7 +24,7 @@ func sampleMonitor(t *testing.T) (*Monitor, *PreparedSnapshot, *map[string][]Con
 	now := time.Unix(1234567890, 0)
 	d := Domain{ClaimUID: "claim", Pool: "node", Device: "npu-1-0", PhysicalID: 3, UUID: "uuid-3", MemoryLimit: 1 << 30, Supported: true}
 	p := &PreparedSnapshot{Generation: 1, Domains: []Domain{d}}
-	w := map[string][]Consumer{"claim": {{Namespace: "ns", Pod: "pod", PodUID: "pod-uid", Container: "app", Devices: map[DeviceRef]bool{{Pool: "node", Device: "npu-1-0"}: true}}}}
+	w := map[string][]Consumer{"claim": {{Namespace: "ns", Pod: "pod", Container: "app", Devices: map[DeviceRef]bool{{Pool: "node", Device: "npu-1-0"}: true}}}}
 	m := &Monitor{
 		config: Config{ClaimsRoot: t.TempDir(), Interval: time.Second, MaxAge: 15 * time.Second},
 		last:   map[string]time.Time{"devices": now}, reported: make(map[string]string), hostOK: true,
@@ -218,7 +218,7 @@ func TestMultipleCardsAndIndependentClaimsKeepTheirAccounting(t *testing.T) {
 	other.ClaimUID, other.MemoryLimit = "other-claim", 2<<30
 	p.Domains = append(p.Domains, other)
 	consumer := (*w)["claim"][0]
-	consumer.Pod, consumer.PodUID = "other-pod", "other-pod-uid"
+	consumer.Pod = "other-pod"
 	(*w)["other-claim"] = []Consumer{consumer}
 	data = coreFixture()
 	binary.LittleEndian.PutUint64(data, 2<<30)

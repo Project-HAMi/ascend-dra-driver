@@ -82,7 +82,7 @@ func (s *DeviceState) metricsSnapshot() (monitor.PreparedSnapshot, error) {
 }
 
 func startMetrics(ctx context.Context, cfg *Config, state *DeviceState) (*monitor.Monitor, error) {
-	resolver, err := monitor.NewWorkloadResolver(ctx, cfg.coreclient, cfg.flags.nodeName, cfg.flags.podResourcesSocket)
+	resolver, err := monitor.NewWorkloadResolver(cfg.flags.podResourcesSocket)
 	if err != nil {
 		return nil, err
 	}
