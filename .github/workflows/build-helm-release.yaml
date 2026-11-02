@@ -101,6 +101,9 @@ jobs:
           make verify-helm-chart
           make verify-helm-release-path
 
+      - name: Verify default driver image is published
+        run: sh scripts/verify-chart-image.sh "${{ env.CHART_PATH }}"
+
       - name: Configure Git
         run: |
           git config user.name "${GITHUB_ACTOR}"

@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Chart render contract tests; these do not contact Kubernetes."""
 
+import os
 import pathlib
+import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 
-CHART = pathlib.Path(__file__).resolve().parents[1] / "deployments/helm/ascend-dra-driver"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+CHART = ROOT / "deployments/helm/ascend-dra-driver"
 
 
 @unittest.skipUnless(shutil.which("helm"), "helm is required for render tests")
@@ -26,6 +30,42 @@ class MetricsChartTest(unittest.TestCase):
         self.assertIn("--metrics-bind-address=:9395", result.stdout)
         self.assertNotIn('resources: ["pods"]', result.stdout)
         self.assertNotIn("kind: ServiceMonitor", result.stdout)
+
+    def test_default_init_and_plugin_images_use_current_application_version(self):
+        for settings in ((), ("kubeletPlugin.metrics.enabled=false",), ("kubeletPlugin.fullCardAndTraditionalVNPU.enabled=true",)):
+            with self.subTest(settings=settings):
+                result = self.render(*settings)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                images = re.findall(r"^\s+image: (\S+)\s*$", result.stdout, re.MULTILINE)
+                self.assertEqual(images, ["projecthami/ascend-dra-driver:v0.2.0"] * 2)
+        self.assertRegex((ROOT / "common.mk").read_text(), r"(?m)^VERSION\s+\?=\s+v0\.2\.0$")
+
+    def test_custom_image_override_is_shared_by_init_and_plugin(self):
+        result = self.render("image.repository=example.test/driver", "image.tag=custom-build")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        images = re.findall(r"^\s+image: (\S+)\s*$", result.stdout, re.MULTILINE)
+        self.assertEqual(images, ["example.test/driver:custom-build"] * 2)
+
+    def test_release_image_check_requires_a_published_default_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_docker = pathlib.Path(directory) / "docker"
+            fake_docker.write_text(
+                '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$CHART_IMAGE_TEST_RECORD"\nexit "$CHART_IMAGE_TEST_EXIT"\n'
+            )
+            fake_docker.chmod(0o755)
+            record = pathlib.Path(directory) / "arguments"
+            for exit_code in (0, 1):
+                with self.subTest(registry_exit=exit_code):
+                    env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"],
+                               CHART_IMAGE_TEST_RECORD=str(record), CHART_IMAGE_TEST_EXIT=str(exit_code))
+                    result = subprocess.run(
+                        ["sh", str(ROOT / "scripts/verify-chart-image.sh"), str(CHART)],
+                        env=env, capture_output=True, text=True, check=False,
+                    )
+                    self.assertEqual(result.returncode, exit_code, result.stderr)
+                    self.assertEqual(record.read_text().strip(), "manifest inspect projecthami/ascend-dra-driver:v0.2.0")
+                    if exit_code:
+                        self.assertIn("Publish the matching version", result.stderr)
 
     def test_operator_preserves_workload_labels_and_custom_port(self):
         result = self.render("kubeletPlugin.metrics.port=19495", "kubeletPlugin.metrics.serviceMonitor.enabled=true")

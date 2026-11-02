@@ -1,5 +1,17 @@
 # HAMi core metrics
 
+Chart 0.2.0 defaults to `projecthami/ascend-dra-driver:v0.2.0` for both init and
+plugin containers. This version supplies the asset installer and metrics CLI
+flags. Disabling metrics still requires the new image; it does not make this
+chart compatible with v0.1.0. Custom images must provide the same interfaces.
+
+For a release, publish the matching driver image through the existing version-tag
+CI (`v0.2.0` for this release), then publish the chart. Main-branch CI publishes
+`latest`, which does not satisfy the versioned default. The Helm release workflow
+checks the default image manifest before any release writes; if it ran before
+the image build completed, rerun it after that build succeeds. The chart release
+does not publish the driver image itself.
+
 The chart enables the driver's built-in `/metrics` endpoint on port 9395 in
 HAMivNPUCore mode. No NPU Exporter is required. Disable it with
 `--set kubeletPlugin.metrics.enabled=false`. Traditional full-card/vNPU mode

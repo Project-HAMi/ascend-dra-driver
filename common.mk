@@ -19,7 +19,7 @@ GOPROXY ?= https://proxy.golang.org,direct
 DRIVER_NAME := ascend-dra-driver
 MODULE := .
 
-VERSION  ?= v0.1.0
+VERSION  ?= v0.2.0
 vVERSION := v$(VERSION:v%=%)
 REVISION ?= unknown
 BUILD_DATE ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')

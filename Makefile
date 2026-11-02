@@ -200,6 +200,9 @@ verify-helm-release-path:
 	chart_releaser_version="$${chart_releaser_action#*@}"; \
 	if ! printf '%s\n' "$$chart_releaser_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$'; then echo "chart-releaser action must use a full semantic version, got $$chart_releaser_action" >&2; exit 1; fi; \
 	grep -Fq 'charts_dir: deployments/helm' $(HELM_RELEASE_WORKFLOW); \
+	image_check_line="$$(grep -n 'run: sh scripts/verify-chart-image.sh' $(HELM_RELEASE_WORKFLOW) | cut -d: -f1)"; \
+	write_line="$$(grep -n 'name: Configure Git' $(HELM_RELEASE_WORKFLOW) | cut -d: -f1)"; \
+	if [ -z "$$image_check_line" ] || [ -z "$$write_line" ] || [ "$$image_check_line" -ge "$$write_line" ]; then echo 'default driver image verification must precede release writes' >&2; exit 1; fi; \
 	if grep -Eq '^[[:space:]]*skip_packaging:[[:space:]]*true' $(HELM_RELEASE_WORKFLOW); then echo 'chart-releaser skip_packaging must remain disabled' >&2; exit 1; fi; \
 	show_line="$$(grep -n 'helm show chart' $(HELM_RELEASE_WORKFLOW) | cut -d: -f1)"; \
 	package_line="$$(grep -n 'helm package "$${{ env.CHART_PATH }}" --destination .cr-release-packages' $(HELM_RELEASE_WORKFLOW) | cut -d: -f1)"; \
