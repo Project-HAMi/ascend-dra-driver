@@ -69,6 +69,14 @@ do not suppress a still-prepared, observed consumer; Unprepare invalidates its
 container samples. Missing/uninitialized SHM and source freshness checks still
 apply.
 
+Full refreshes start at least `collectionInterval` apart. Closely spaced host
+results and timer events share this limit; skipped refreshes do not extend
+sample freshness. Host results are still cached for the next refresh. The first
+refresh runs on the first host result or timer event. This interval is minimum
+spacing, not an exact publication cadence: scheduling and source latency can
+make updates less frequent. A running refresh still waits for PodResources,
+with its existing timeout.
+
 ## Metric meanings
 
 The eight `hami_*` gauges keep the Ascend Device Plugin's names, HELP and labels:

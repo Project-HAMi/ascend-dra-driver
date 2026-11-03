@@ -36,13 +36,14 @@ type Monitor struct {
 	done   chan struct{}
 	once   sync.Once
 
-	host       hostResult
-	hostOK     bool
-	workloads  map[string][]Consumer
-	workloadAt time.Time
-	last       map[string]time.Time
-	reported   map[string]string
-	shortFiles map[string]time.Time
+	lastRefreshStarted time.Time
+	host               hostResult
+	hostOK             bool
+	workloads          map[string][]Consumer
+	workloadAt         time.Time
+	last               map[string]time.Time
+	reported           map[string]string
+	shortFiles         map[string]time.Time
 }
 
 // Start binds synchronously, then starts independent hardware and core sampling.
@@ -126,7 +127,6 @@ func (m *Monitor) run(ctx context.Context, results <-chan hostResult) {
 	defer close(m.done)
 	ticker := time.NewTicker(m.config.Interval)
 	defer ticker.Stop()
-	m.refresh(ctx, time.Now())
 	for {
 		select {
 		case <-ctx.Done():
@@ -143,8 +143,8 @@ func (m *Monitor) run(ctx context.Context, results <-chan hostResult) {
 				m.report("devices", result.err.Error())
 			}
 			m.refresh(ctx, time.Now())
-		case now := <-ticker.C:
-			m.refresh(ctx, now)
+		case <-ticker.C:
+			m.refresh(ctx, time.Now())
 		}
 	}
 }
@@ -156,7 +156,18 @@ func (m *Monitor) report(key, message string) {
 	}
 }
 
-func (m *Monitor) refresh(ctx context.Context, now time.Time) {
+// refresh is called serially by run with the actual start time, not a queued
+// ticker timestamp. Failed attempts also reserve the interval; skipped attempts
+// leave all published samples and source freshness unchanged.
+func (m *Monitor) refresh(ctx context.Context, started time.Time) {
+	if !m.lastRefreshStarted.IsZero() && started.Sub(m.lastRefreshStarted) < m.config.Interval {
+		return
+	}
+	m.lastRefreshStarted = started
+	m.sample(ctx, started)
+}
+
+func (m *Monitor) sample(ctx context.Context, now time.Time) {
 	o := observation{at: now, ok: make(map[string]bool), last: make(map[string]time.Time)}
 	workCtx, cancel := context.WithTimeout(ctx, m.config.Interval)
 	workloads, err := m.src.Workloads(workCtx)

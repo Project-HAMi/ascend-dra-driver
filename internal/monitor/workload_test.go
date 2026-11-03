@@ -216,12 +216,12 @@ func TestPreparedStateGatesCDIIdentityAndMetricLifetime(t *testing.T) {
 	// Even an initialized file plus a PodResources row is insufficient before
 	// Prepare. No Pod/Claim API object or informer is required at any point.
 	device.CdiDevices[1].Name = "k8s." + consts.DriverName + "/npu=claim"
-	m.refresh(context.Background(), now)
+	m.sample(context.Background(), now)
 	require.NotContains(t, gather(t, m.c), "hami_vgpu_")
 
 	prepared.Domains = []Domain{domain}
 	prepared.Domains[0].Generation++
-	m.refresh(context.Background(), now)
+	m.sample(context.Background(), now)
 	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
 
 	// A terminating or API-deleted Pod still has this node's prepared Claim
@@ -231,22 +231,22 @@ func TestPreparedStateGatesCDIIdentityAndMetricLifetime(t *testing.T) {
 	m.host.at = later
 	m.last["devices"] = later
 	m.c.now = func() time.Time { return later }
-	m.refresh(context.Background(), later)
+	m.sample(context.Background(), later)
 	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
 
 	// A same-name Claim with a new UID cannot consume the old CDI identity.
 	prepared.Domains[0].ClaimUID = "replacement"
 	prepared.Domains[0].Generation++
 	writeDomain(t, m.config.ClaimsRoot, prepared.Domains[0], coreFixture())
-	m.refresh(context.Background(), later)
+	m.sample(context.Background(), later)
 	require.Equal(t, 1, countObservedDomains(m.c.current, "unmapped"))
 	require.NotContains(t, gather(t, m.c), "hami_vgpu_")
 	device.CdiDevices[1].Name = "k8s." + consts.DriverName + "/npu=replacement"
 	device.PoolName = "another-node"
-	m.refresh(context.Background(), later)
+	m.sample(context.Background(), later)
 	require.NotContains(t, gather(t, m.c), "hami_vgpu_", "UID alone must not bypass the prepared pool/device match")
 	device.PoolName = "node"
-	m.refresh(context.Background(), later)
+	m.sample(context.Background(), later)
 	require.Contains(t, gather(t, m.c), "hami_vgpu_memory_used_bytes")
 
 	// Unprepare invalidates every old container sample immediately, even if
@@ -256,6 +256,6 @@ func TestPreparedStateGatesCDIIdentityAndMetricLifetime(t *testing.T) {
 	require.NotContains(t, output, "hami_vgpu_")
 	require.NotContains(t, output, "hami_container_")
 	require.Contains(t, output, "hami_host_gpu_memory_used_bytes")
-	m.refresh(context.Background(), later)
+	m.sample(context.Background(), later)
 	require.Empty(t, m.c.current.domains)
 }
