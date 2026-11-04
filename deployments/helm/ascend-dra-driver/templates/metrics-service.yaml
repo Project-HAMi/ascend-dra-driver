@@ -1,0 +1,17 @@
+{{- if and .Values.kubeletPlugin.metrics.enabled (not .Values.kubeletPlugin.fullCardAndTraditionalVNPU.enabled) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ascend-dra-driver.fullname" . }}-metrics
+  namespace: {{ include "ascend-dra-driver.namespace" . }}
+  labels:
+    {{- include "ascend-dra-driver.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "ascend-dra-driver.selectorLabels" . | nindent 4 }}
+  ports:
+  - name: metrics
+    port: {{ .Values.kubeletPlugin.metrics.port }}
+    targetPort: metrics
+{{- end }}

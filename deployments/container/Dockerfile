@@ -58,6 +58,7 @@ LABEL summary="Ascend NPU DRA resource driver with HAMi libvnpu consumable capac
 LABEL description="Resource driver for exposing and partitioning Ascend NPUs through Kubernetes DRA"
 
 COPY dist/hami-vnpu-core/ /usr/local/hami-vnpu-core-assets/
+COPY --chmod=0755 scripts/install-core-assets.sh /usr/bin/install-hami-vnpu-assets
 COPY --from=build /artifacts/ascend-dra-kubeletplugin /usr/bin/ascend-dra-kubeletplugin
 
 ENTRYPOINT ["/usr/bin/ascend-dra-kubeletplugin"]

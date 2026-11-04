@@ -30,6 +30,9 @@ jobs:
             helm:
               - 'deployments/helm/ascend-dra-driver/**'
               - 'Makefile'
+              - 'common.mk'
+              - 'scripts/verify-chart-image.sh'
+              - 'scripts/test_helm_metrics.py'
               - '.github/workflows/helm-lint.yaml'
               - '.github/workflows/build-helm-release.yaml'
 
@@ -52,6 +55,7 @@ jobs:
         run: |
           make verify-helm-chart
           make verify-helm-release-path
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_helm_metrics.py'
 
   helm-lint-required:
     runs-on: ubuntu-latest

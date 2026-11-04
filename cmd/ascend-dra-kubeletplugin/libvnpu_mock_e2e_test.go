@@ -100,9 +100,9 @@ func TestMockDRALibvNPULifecycle(t *testing.T) {
 
 	spec := claimSpecContent(t, cdiRoot, "uid-libvnpu")
 	assert.Contains(t, spec, "ASCEND_VISIBLE_DEVICES=0")
-	assert.Contains(t, spec, "NPU_MEM_QUOTA=1024")
-	assert.Contains(t, spec, "NPU_PRIORITY=50")
-	assert.Contains(t, spec, "NPU_GLOBAL_SHM_PATH=/hami-shared-region/0_global_registry")
+	assert.Contains(t, spec, "NPU_MEMORY_LIMIT_MB=1024")
+	assert.Contains(t, spec, "NPU_COMPUTE_LIMIT=50")
+	assert.Contains(t, spec, "NPU_GLOBAL_SHM_PATH=/hami-shared-region/global_registry")
 	assert.Contains(t, spec, "NPU_LOCAL_SHM_PATH=/hami-vnpu-shmem/vnpu_local_shmem")
 	assert.Contains(t, spec, "/hami-vnpu-core")
 	assert.Contains(t, spec, "/etc/ld.so.preload")
@@ -168,9 +168,10 @@ func TestMockDRALibvNPUTwoDeviceLifecycle(t *testing.T) {
 	edits := spec.Devices[0].ContainerEdits
 	assert.ElementsMatch(t, []string{
 		"ASCEND_VISIBLE_DEVICES=0,2",
-		"NPU_MEM_QUOTA=1024",
-		"NPU_PRIORITY=50",
-		"NPU_GLOBAL_SHM_PATH=/hami-shared-region/0_global_registry",
+		"NPU_MEMORY_LIMIT_MB=1024",
+		"NPU_COMPUTE_LIMIT=50",
+		"NPU_SCHED_POLICY=dynamic",
+		"NPU_GLOBAL_SHM_PATH=/hami-shared-region/global_registry",
 		"NPU_LOCAL_SHM_PATH=/hami-vnpu-shmem/vnpu_local_shmem",
 	}, edits.Env)
 
@@ -250,8 +251,8 @@ func TestLibvNPUApplyConfigAcceptsLegacyQualifiedCapacityNames(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Contains(t, edits, "npu-0-0")
-	assert.Contains(t, edits["npu-0-0"].Env, "NPU_MEM_QUOTA=1024")
-	assert.Contains(t, edits["npu-0-0"].Env, "NPU_PRIORITY=50")
+	assert.Contains(t, edits["npu-0-0"].Env, "NPU_MEMORY_LIMIT_MB=1024")
+	assert.Contains(t, edits["npu-0-0"].Env, "NPU_COMPUTE_LIMIT=50")
 }
 
 func TestLibvNPUClaimLocalShmemPathRejectsUnsafeUID(t *testing.T) {

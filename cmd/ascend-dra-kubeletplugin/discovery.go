@@ -87,15 +87,11 @@ func getDeviceResources(mgr *AscendManager, devType string, vnpuManager *VNPUMan
 	return maxAICore, maxMemory
 }
 
-// enumerateAllPossibleDevices initializes the devmanager, creates a vNPU manager if possible,
+// enumerateAllPossibleDevices creates a vNPU manager if possible,
 // and enumerates all possible devices to produce an AllocatableDevices map.
-func enumerateAllPossibleDevices() (AllocatableDevices, *VNPUManager, error) {
-	mgr, err := NewAscendManager()
-	if err != nil {
-		return nil, nil, err
-	}
-
+func enumerateAllPossibleDevices(mgr *AscendManager) (AllocatableDevices, *VNPUManager, error) {
 	var vnpuManager *VNPUManager
+	var err error
 	if featuregates.Enabled(featuregates.HAMivNPUCore) {
 		runner, err := newNPUSmiDeviceShareRunner()
 		if err != nil {
@@ -179,7 +175,7 @@ func buildLibvNPUDeviceCapacities(mgr *AscendManager, logicID int32) map[resourc
 	memValue := *resource.NewQuantity(memoryMiB*1024*1024, resource.BinarySI)
 	memStep := resource.MustParse("1Mi")
 	aicoreValue := *resource.NewQuantity(100, resource.DecimalSI)
-	aicoreMin := *resource.NewQuantity(0, resource.DecimalSI)
+	aicoreMin := *resource.NewQuantity(1, resource.DecimalSI)
 	aicoreStep := *resource.NewQuantity(1, resource.DecimalSI)
 
 	return map[resourceapi.QualifiedName]resourceapi.DeviceCapacity{
